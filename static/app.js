@@ -106,9 +106,9 @@ function show(view) {
   });
   if (signedIn) {
     currentView = view;
-    document.title = `${TITLES[view]} – Blink Web`;
+    document.title = `${TITLES[view]} – FreeBlink`;
   } else {
-    document.title = "Blink Web";
+    document.title = "FreeBlink";
   }
 }
 

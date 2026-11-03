@@ -41,7 +41,7 @@ async def lifespan(app: FastAPI):
     await service.shutdown()
 
 
-app = FastAPI(title="Blink Web", lifespan=lifespan)
+app = FastAPI(title="FreeBlink", lifespan=lifespan)
 
 
 @app.middleware("http")
@@ -58,7 +58,7 @@ async def basic_auth(request: Request, call_next):
             except Exception:  # noqa: BLE001 - malformed header is just "not authorized"
                 ok = False
         if not ok:
-            return Response(status_code=401, headers={"WWW-Authenticate": 'Basic realm="Blink Web"'})
+            return Response(status_code=401, headers={"WWW-Authenticate": 'Basic realm="FreeBlink"'})
     return await call_next(request)
 
 
@@ -205,7 +205,7 @@ async def notifications_test():
     if not watcher.notifier.enabled:
         raise BlinkError("Notifications are off. Set NTFY_TOPIC in .env and restart.")
     try:
-        await watcher.notifier.send("Blink Web test", "Notifications are working.", tags="white_check_mark")
+        await watcher.notifier.send("FreeBlink test", "Notifications are working.", tags="white_check_mark")
     except Exception as exc:  # noqa: BLE001
         raise BlinkError(f"Could not send notification: {exc}")
     return {"sent": True}
