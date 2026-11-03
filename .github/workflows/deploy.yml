@@ -5,7 +5,7 @@ name: Build and deploy
 on:
   push:
     branches: [main]
-    paths-ignore: ["**.md", "docs/**", "LICENSE"]
+    paths-ignore: ["**.md", "docs/**", "deploy/**", "LICENSE"]  # deploy/ isn't in the image
   pull_request:
   workflow_dispatch:
 

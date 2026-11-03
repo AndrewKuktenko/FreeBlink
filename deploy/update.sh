@@ -19,7 +19,7 @@ fi
 
 ids() { $SUDO docker compose images -q 2>/dev/null | sort | tr '\n' ' '; }
 before=$(ids)
-$SUDO docker compose pull -q
+if ! out=$($SUDO docker compose pull -q 2>&1); then log "pull failed: $out"; exit 1; fi
 $SUDO docker compose up -d --no-build --remove-orphans --quiet-pull 2>&1 | grep -v "Running\|Up-to-date" || true
 after=$(ids)
 
