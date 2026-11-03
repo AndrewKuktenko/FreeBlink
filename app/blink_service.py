@@ -1,12 +1,12 @@
-"""Owns the single Blink session: login, 2FA, token persistence, polling, media."""
+"""One Blink account's session: login, 2FA, token persistence, polling, media."""
 
 import asyncio
 import hashlib
 import json
 import logging
-import os
 import time
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 from urllib.parse import urljoin
 
@@ -16,7 +16,7 @@ from blinkpy.auth import Auth, BlinkTwoFARequiredError
 from blinkpy.blinkpy import Blink
 from blinkpy.camera import BlinkCamera
 
-from . import config
+from . import config, crypto
 from .media import extract_frames
 
 log = logging.getLogger(__name__)
@@ -57,7 +57,13 @@ def camera_key(cam: BlinkCamera) -> str:
 
 
 class BlinkService:
-    def __init__(self) -> None:
+    def __init__(self, folder: Path) -> None:
+        self.folder = folder
+        self.credentials_file = folder / "blink.enc"
+        self.clips_dir = folder / "clips"          # cache of downloaded clip videos
+        self.clip_thumbs_dir = folder / "clip_thumbs"
+        self.stills_dir = folder / "stills"        # last live-view frame per camera
+        self.username: Optional[str] = None
         self.session: Optional[ClientSession] = None
         self.blink: Optional[Blink] = None
         self.state = LOGGED_OUT
@@ -72,12 +78,12 @@ class BlinkService:
 
     # ---------- lifecycle ----------
 
-    async def startup(self) -> None:
-        config.DATA_DIR.mkdir(parents=True, exist_ok=True)
+    async def startup(self, resume: bool = True) -> None:
+        # Each account gets its own HTTP session so no cookies or connections are shared.
         self.session = ClientSession()
-        if config.CREDENTIALS_FILE.exists():
+        if resume and self.credentials_file.exists():
             try:
-                saved = json.loads(config.CREDENTIALS_FILE.read_text())
+                saved = json.loads(crypto.read_secret(self.credentials_file))
                 await self._resume(saved)
             except Exception as exc:  # noqa: BLE001 - surface any resume failure to UI
                 log.warning("Could not resume saved Blink session: %s", exc)
@@ -88,6 +94,7 @@ class BlinkService:
     async def shutdown(self) -> None:
         if self._refresh_task:
             self._refresh_task.cancel()
+        self.state = LOGGED_OUT
         if self.session:
             await self.session.close()
 
@@ -104,7 +111,8 @@ class BlinkService:
         self.state = READY
         self.error = None
         await self._save()
-        log.info("Resumed Blink session for %s", saved.get("username"))
+        self.username = saved.get("username")
+        log.info("Resumed Blink session %s", self.folder.name)
         self._schedule_first_refresh()
 
     def _new_blink(self, login_data: Dict[str, Any]) -> Blink:
@@ -135,10 +143,7 @@ class BlinkService:
             return
         data = dict(self.blink.auth.login_attributes)
         data.pop("password", None)
-        tmp = config.CREDENTIALS_FILE.with_suffix(".tmp")
-        tmp.write_text(json.dumps(data, indent=2))
-        os.chmod(tmp, 0o600)
-        tmp.replace(config.CREDENTIALS_FILE)
+        crypto.write_secret(self.credentials_file, json.dumps(data))
 
     async def _refresh_loop(self) -> None:
         while True:
@@ -154,6 +159,7 @@ class BlinkService:
 
     async def login(self, username: str, password: str) -> str:
         async with self._lock:
+            self.username = username
             self.blink = self._new_blink({"username": username, "password": password})
             self.error = None
             _signin.status = None
@@ -194,8 +200,7 @@ class BlinkService:
             self.state = LOGGED_OUT
             self._thumb_cache.clear()
             self._clips.clear()
-            if config.CREDENTIALS_FILE.exists():
-                config.CREDENTIALS_FILE.unlink()
+            self.credentials_file.unlink(missing_ok=True)
 
     def _require(self) -> Blink:
         if self.state != READY or not self.blink:
@@ -236,7 +241,7 @@ class BlinkService:
                     "temperature_f": attrs.get("temperature_calibrated") or attrs.get("temperature"),
                     "wifi_strength": cam.wifi_strength,
                     "last_record": max(filter(None, [cam.last_record, newest.get(cam.name)]), key=_ts, default=None),
-                    "thumbnail_version": _thumb_version(cam.thumbnail) or _still_version(camera_key(cam)),
+                    "thumbnail_version": _thumb_version(cam.thumbnail) or self._still_version(camera_key(cam)),
                 })
             systems.append({
                 "name": name,
@@ -297,7 +302,7 @@ class BlinkService:
         if url and url in self._thumb_cache:
             return self._thumb_cache[url]
         # No Blink thumbnail (common for Minis): use the last live-view frame, if any.
-        still = config.STILLS_DIR / f"{key}.jpg"
+        still = self.stills_dir / f"{key}.jpg"
         return still.read_bytes() if still.exists() else None
 
     def _cache_thumb(self, url: str, data: bytes) -> None:
@@ -365,7 +370,7 @@ class BlinkService:
 
     async def clip_video(self, clip_id: str) -> Optional[bytes]:
         item = self._clip(clip_id)
-        cache = config.CLIPS_DIR / f"{clip_id}.mp4"
+        cache = self.clips_dir / f"{clip_id}.mp4"
         if cache.exists():
             return cache.read_bytes()
         if item["source"] == "cloud":
@@ -373,7 +378,7 @@ class BlinkService:
         else:
             data = await self._fetch_usb_clip(item)
         if data:
-            config.CLIPS_DIR.mkdir(parents=True, exist_ok=True)
+            self.clips_dir.mkdir(parents=True, exist_ok=True)
             cache.write_bytes(data)
             self._prune_clip_cache()
         return data
@@ -396,7 +401,7 @@ class BlinkService:
 
     async def _thumbnail_from_video(self, clip_id: str) -> Optional[bytes]:
         """USB clips have no Blink thumbnail: fetch the clip once and keep a frame from it."""
-        thumb = config.CLIP_THUMBS_DIR / f"{clip_id}.jpg"
+        thumb = self.clip_thumbs_dir / f"{clip_id}.jpg"
         if thumb.exists():
             return thumb.read_bytes()
         video = await self.clip_video(clip_id)
@@ -405,12 +410,16 @@ class BlinkService:
         frames = await extract_frames(video, 1)
         if not frames:
             return None
-        config.CLIP_THUMBS_DIR.mkdir(parents=True, exist_ok=True)
+        self.clip_thumbs_dir.mkdir(parents=True, exist_ok=True)
         thumb.write_bytes(frames[0])
         return frames[0]
 
-    def _prune_clip_cache(self, keep: int = 300) -> None:
-        files = sorted(config.CLIPS_DIR.glob("*.mp4"), key=lambda f: f.stat().st_mtime)
+    def _still_version(self, key: str) -> str:
+        still = self.stills_dir / f"{key}.jpg"
+        return f"s{int(still.stat().st_mtime)}" if still.exists() else ""
+
+    def _prune_clip_cache(self, keep: int = 150) -> None:
+        files = sorted(self.clips_dir.glob("*.mp4"), key=lambda f: f.stat().st_mtime)
         for f in files[:-keep]:
             f.unlink(missing_ok=True)
 
@@ -429,11 +438,6 @@ class BlinkService:
         if data is not None:
             self._cache_thumb(url, data)
         return data
-
-
-def _still_version(key: str) -> str:
-    still = config.STILLS_DIR / f"{key}.jpg"
-    return f"s{int(still.stat().st_mtime)}" if still.exists() else ""
 
 
 def _ts(value: Optional[str]) -> float:

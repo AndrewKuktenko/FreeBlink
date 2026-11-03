@@ -1,0 +1,34 @@
+# FreeBlink + Caddy (automatic HTTPS). Configure DOMAIN in .env, then: docker compose up -d
+services:
+  app:
+    build: .
+    restart: unless-stopped
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      HOST: 0.0.0.0
+      BLINK_DATA_DIR: /data
+    volumes:
+      - freeblink-data:/data
+    # Not published: only Caddy can reach it.
+
+  caddy:
+    image: caddy:2.10
+    restart: unless-stopped
+    depends_on: [app]
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"
+    environment:
+      DOMAIN: ${DOMAIN:?Set DOMAIN in .env, e.g. DOMAIN=freeblink.duckdns.org}
+    volumes:
+      - ./deploy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+      - caddy-config:/config
+
+volumes:
+  freeblink-data:
+  caddy-data:
+  caddy-config:

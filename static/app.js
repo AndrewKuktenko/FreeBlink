@@ -175,6 +175,30 @@ $("#twofa-form").addEventListener("submit", (e) => {
 $("#logout-btn").addEventListener("click", (e) =>
   busy(e.target, async () => route((await api("/api/logout", { method: "POST" })).state)));
 
+$("#twofa-cancel").addEventListener("click", (e) =>
+  busy(e.target, async () => route((await api("/api/logout", { method: "POST" })).state)));
+
+// Deleting is permanent, so it takes a second tap (an inline confirm, like an iOS destructive action).
+let deleteTimer = null;
+$("#delete-btn").addEventListener("click", (e) => {
+  const btn = e.currentTarget;
+  if (!btn.classList.contains("confirming")) {
+    btn.classList.add("confirming");
+    btn.textContent = "Tap again to delete everything";
+    clearTimeout(deleteTimer);
+    deleteTimer = setTimeout(() => { btn.classList.remove("confirming"); btn.textContent = "Delete my FreeBlink data"; }, 5000);
+    return;
+  }
+  clearTimeout(deleteTimer);
+  busy(btn, async () => {
+    const { state } = await api("/api/account/delete", { method: "POST" });
+    btn.classList.remove("confirming");
+    btn.textContent = "Delete my FreeBlink data";
+    toast("Your FreeBlink data was deleted");
+    route(state);
+  });
+});
+
 $("#refresh-btn").addEventListener("click", async () => {
   const btn = $("#refresh-btn");
   if (btn.disabled) return;
@@ -450,13 +474,17 @@ $("#clip-range").addEventListener("click", (e) => {
 });
 
 let clipsRequest = 0;
+let aiOn = true;
+$("#ai-hint").addEventListener("click", () => { openPage("settings"); setTimeout(() => $("#key-input").focus(), 300); });
 async function loadClips(quiet = false) {
   const root = $("#clips");
   const request = ++clipsRequest;
   if (!quiet) root.replaceChildren(el("div", { class: "clip-list" }, [1, 2, 3, 4].map(() => el("div", { class: "skeleton" }))));
   try {
-    const { clips } = await api(`/api/clips?hours=${clipHours}`);
+    const { clips, ai_enabled: aiEnabled } = await api(`/api/clips?hours=${clipHours}`);
     if (request !== clipsRequest) return;
+    $("#ai-hint").hidden = aiEnabled;
+    aiOn = aiEnabled;
     if (!clips.length) {
       root.replaceChildren(el("div", { class: "empty" }, icon("clips"),
         el("strong", {}, "No clips"), el("p", {}, "Nothing was recorded in this period. New motion clips show up here within a minute.")));
@@ -498,7 +526,7 @@ function renderClip(clip) {
         el("span", { class: "clip-time" }, timeFmt.format(t))),
       ai?.description
         ? el("p", { class: "clip-desc" }, ai.description)
-        : el("p", { class: "clip-desc pending" }, Date.now() - t < 10 * 60000 ? "Describing…" : "No description")));
+        : el("p", { class: "clip-desc pending" }, aiOn && Date.now() - t < 10 * 60000 ? "Describing…" : "No description")));
 }
 
 // ---------- settings ----------
@@ -508,7 +536,8 @@ function renderSettings(s, status) {
   keyStatus.className = `row-value ${s.anthropic_key_set ? "ok" : "bad"}`;
   keyStatus.replaceChildren(icon(s.anthropic_key_set ? "check" : "alert"),
     s.anthropic_key_set ? `Saved, ends in ${(s.anthropic_key_hint || "").replace("…", "")}` : "Not set");
-  $("#key-remove").hidden = s.anthropic_key_source !== "dashboard";
+  $("#key-remove").hidden = !s.anthropic_key_set;
+  $("#account-email").textContent = s.account || "";
   $("#ai-footer").firstChild.textContent =
     `Every new motion clip is described by ${modelName(s.model)} in a sentence or two and sent to your phone. Create a key at `;
   $("#topic-form").topic.value = s.ntfy_topic || "";
@@ -556,6 +585,11 @@ $("#key-remove").addEventListener("click", (e) => saveSettings(e.target, { anthr
 $("#topic-form").addEventListener("submit", (e) => {
   e.preventDefault();
   saveSettings(e.target.querySelector("button[type=submit]"), { ntfy_topic: e.target.topic.value }, "Topic saved");
+});
+$("#topic-copy").addEventListener("click", async () => {
+  const topic = $("#topic-input").value;
+  try { await navigator.clipboard.writeText(topic); toast("Topic copied"); }
+  catch { $("#topic-input").select(); toast("Select the topic and copy it", true); }
 });
 $("#notify-test").addEventListener("click", (e) => busy(e.target, async () => {
   await api("/api/notifications/test", { method: "POST" });

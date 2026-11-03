@@ -60,14 +60,14 @@
       <section id="login-view" class="auth" hidden>
         <span class="app-icon large"><svg class="ic"><use href="#i-video"/></svg></span>
         <h1>FreeBlink</h1>
-        <p class="secondary">Sign in with your Blink account to see your cameras.</p>
+        <p class="secondary">Watch and control your Blink cameras, with a short AI description of every motion clip.</p>
         <form id="login-form" class="auth-form">
           <div class="list">
             <label class="field"><span class="sr-only">Email</span><input name="username" type="email" autocomplete="username" placeholder="Email" required></label>
             <label class="field"><span class="sr-only">Password</span><input name="password" type="password" autocomplete="current-password" placeholder="Password" required></label>
           </div>
           <button type="submit" class="btn-filled large">Sign in</button>
-          <p class="footnote">Your password goes to Blink only. This app keeps a sign-in token, never the password.</p>
+          <p class="footnote">Sign in with your Blink account. FreeBlink passes your password to Blink once and never stores it; Blink's sign-in token is kept encrypted, and you can delete everything in Settings. FreeBlink is not made by Blink or Amazon. <a href="https://github.com/AndrewKuktenko/FreeBlink" target="_blank" rel="noopener">Source code</a></p>
         </form>
       </section>
 
@@ -80,6 +80,7 @@
             <label class="field"><span class="sr-only">Verification code</span><input name="code" inputmode="numeric" autocomplete="one-time-code" placeholder="Code" required></label>
           </div>
           <button type="submit" class="btn-filled large">Verify</button>
+          <button type="button" id="twofa-cancel" class="text-btn center">Use a different account</button>
         </form>
       </section>
 
@@ -92,6 +93,7 @@
       <!-- Clips -->
       <section id="clips-view" class="page" hidden>
         <h1 class="large-title">Clips</h1>
+        <button type="button" id="ai-hint" class="hint" hidden><svg class="ic"><use href="#i-sparkle"/></svg><span><strong>Get AI descriptions of your clips</strong>Add your Claude API key in Settings.</span></button>
         <div class="segmented" id="clip-range" role="radiogroup" aria-label="Time range">
           <button role="radio" data-hours="6" aria-checked="false">6 hours</button>
           <button role="radio" data-hours="24" aria-checked="true">24 hours</button>
@@ -122,7 +124,7 @@
           </div>
           <button type="button" id="key-remove" class="row row-button destructive" hidden>Remove API key</button>
         </div>
-        <p class="list-footer" id="ai-footer">Every new motion clip is described by Claude in a sentence or two and sent to your phone. Create a key at <a href="https://platform.claude.com/settings/keys" target="_blank" rel="noopener">platform.claude.com</a>. It's checked with Anthropic, then kept only on this computer.</p>
+        <p class="list-footer" id="ai-footer">Every new motion clip is described by Claude in a sentence or two and sent to your phone. Create a key at <a href="https://platform.claude.com/settings/keys" target="_blank" rel="noopener">platform.claude.com</a>; each clip uses a few thousand tokens, billed to your own Anthropic account. The key is checked with Anthropic, then stored encrypted.</p>
 
         <h2 class="list-header">Phone notifications</h2>
         <div class="list">
@@ -131,14 +133,21 @@
             <input id="topic-input" name="topic" autocomplete="off" spellcheck="false" class="align-end">
             <button type="submit" class="btn-tinted">Save</button>
           </form>
+          <button type="button" id="topic-copy" class="row row-button">Copy topic</button>
           <button type="button" id="notify-test" class="row row-button">Send test notification</button>
         </div>
-        <p class="list-footer">In the ntfy app, subscribe to this exact topic on <span id="ntfy-server"></span>. For banners on iPhone, allow ntfy in Settings, then Notifications. Anyone who knows the topic can read your alerts, so keep it long and random.</p>
+        <p class="list-footer">Install the free ntfy app (iPhone or Android), tap +, and subscribe to this exact topic on <span id="ntfy-server"></span>. For banners on iPhone, allow ntfy in Settings, then Notifications. Anyone who knows the topic can read your alerts, so keep it secret.</p>
 
         <h2 class="list-header">Blink account</h2>
         <div class="list">
-          <button type="button" id="logout-btn" class="row row-button destructive">Sign out</button>
+          <div class="row">
+            <span class="row-label">Signed in as</span>
+            <span class="row-value" id="account-email"></span>
+          </div>
+          <button type="button" id="logout-btn" class="row row-button">Sign out on this device</button>
+          <button type="button" id="delete-btn" class="row row-button destructive">Delete my FreeBlink data</button>
         </div>
+        <p class="list-footer" id="delete-footer">Signing out keeps phone notifications coming. Deleting stops them, forgets your Blink sign-in, and erases your clips, descriptions and settings from this server. Your Blink account itself isn't affected.</p>
       </section>
     </main>
   </div>

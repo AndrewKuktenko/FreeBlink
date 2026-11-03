@@ -495,3 +495,16 @@ dialog.sheet::backdrop { background: rgba(0, 0, 0, .4); animation: fade-in .3s; 
 /* Focus rings inside clipped cards are drawn inset so they stay visible. */
 .cam-media:focus-visible, .clip-row:focus-visible { outline-offset: -4px; border-radius: inherit; }
 .cam-meta { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; display: block; }
+
+/* ---------- multi-user additions ---------- */
+.text-btn.center { justify-self: center; font-weight: 400; font-size: 15px; }
+.auth-form .footnote a { white-space: nowrap; }
+.hint {
+  display: flex; align-items: center; gap: 12px; width: 100%; max-width: 560px; text-align: left;
+  margin: 0 0 18px; padding: 12px 14px; border-radius: 14px;
+  background: var(--tint-soft); color: var(--label);
+}
+.hint .ic { width: 24px; height: 24px; color: var(--tint); }
+.hint span { display: flex; flex-direction: column; font-size: 15px; letter-spacing: -.24px; color: var(--label-2); }
+.hint strong { color: var(--label); font-weight: 600; }
+.row-button.confirming { background: var(--red); color: #fff; font-weight: 600; }

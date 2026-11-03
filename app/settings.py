@@ -1,60 +1,65 @@
-"""Settings changed from the dashboard, stored in data/settings.json (mode 600).
+"""Per-user settings (Claude API key, ntfy topic), stored in the user's folder.
 
-A value saved here overrides the same setting from .env / the environment.
+The API key is encrypted at rest; nothing here is shared between Blink accounts.
 """
 
 import json
 import os
+import secrets
+from pathlib import Path
 from typing import Any, Dict, Optional
 
-from . import config
-
-FILE = config.DATA_DIR / "settings.json"
+from . import crypto
 
 
-def _load() -> Dict[str, Any]:
-    try:
-        return json.loads(FILE.read_text())
-    except (FileNotFoundError, ValueError):
-        return {}
+class UserSettings:
+    def __init__(self, folder: Path) -> None:
+        self.file = folder / "settings.json"
 
+    def _load(self) -> Dict[str, Any]:
+        try:
+            return json.loads(self.file.read_text())
+        except (FileNotFoundError, ValueError):
+            return {}
 
-def _save(data: Dict[str, Any]) -> None:
-    FILE.parent.mkdir(parents=True, exist_ok=True)
-    tmp = FILE.with_suffix(".tmp")
-    tmp.write_text(json.dumps(data, indent=2))
-    os.chmod(tmp, 0o600)
-    tmp.replace(FILE)
+    def _save(self, data: Dict[str, Any]) -> None:
+        self.file.parent.mkdir(parents=True, exist_ok=True)
+        tmp = self.file.with_suffix(".tmp")
+        tmp.write_text(json.dumps(data, indent=2))
+        os.chmod(tmp, 0o600)
+        tmp.replace(self.file)
 
+    def anthropic_api_key(self) -> Optional[str]:
+        token = self._load().get("anthropic_api_key_enc")
+        if not token:
+            return None
+        try:
+            return crypto.decrypt(token)
+        except ValueError:
+            return None
 
-def update(**values: Optional[str]) -> None:
-    """Set values; an empty string removes the dashboard override."""
-    data = _load()
-    for key, value in values.items():
-        if value is None:
-            continue
-        if value == "":
-            data.pop(key, None)
+    def set_anthropic_api_key(self, key: Optional[str]) -> None:
+        data = self._load()
+        data.pop("anthropic_api_key", None)  # never keep a plaintext copy
+        if key:
+            data["anthropic_api_key_enc"] = crypto.encrypt(key)
         else:
-            data[key] = value
-    _save(data)
+            data.pop("anthropic_api_key_enc", None)
+        self._save(data)
 
+    def ntfy_topic(self) -> str:
+        """Every account gets its own hard-to-guess topic, created on first use."""
+        data = self._load()
+        if not data.get("ntfy_topic"):
+            data["ntfy_topic"] = "freeblink-" + secrets.token_urlsafe(15).replace("_", "").replace("-", "").lower()[:18]
+            self._save(data)
+        return data["ntfy_topic"]
 
-def anthropic_api_key() -> Optional[str]:
-    return _load().get("anthropic_api_key") or os.environ.get("ANTHROPIC_API_KEY") or None
-
-
-def anthropic_key_source() -> Optional[str]:
-    if _load().get("anthropic_api_key"):
-        return "dashboard"
-    if os.environ.get("ANTHROPIC_API_KEY"):
-        return ".env"
-    return None
-
-
-def ntfy_topic() -> str:
-    return _load().get("ntfy_topic") or config.NTFY_TOPIC
+    def set_ntfy_topic(self, topic: str) -> None:
+        data = self._load()
+        data["ntfy_topic"] = topic
+        self._save(data)
 
 
 def key_hint(key: Optional[str]) -> Optional[str]:
-    return f"…{key[-4:]}" if key and len(key) > 8 else None
+    return key[-4:] if key and len(key) > 8 else None

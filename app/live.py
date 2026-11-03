@@ -98,10 +98,11 @@ async def open_livestream(camera: BlinkCamera) -> ReliableLiveStream:
 
 
 class LiveSession:
-    def __init__(self, key: str, camera: BlinkCamera):
+    def __init__(self, key: str, camera: BlinkCamera, folder: Path):
         self.key = key
         self.camera = camera
-        self.dir = config.LIVE_DIR / key
+        self.dir = folder / "live" / key
+        self.stills_dir = folder / "stills"
         self.stream = None
         self.ffmpeg: Optional[asyncio.subprocess.Process] = None
         self.feed_task: Optional[asyncio.Task] = None
@@ -173,10 +174,10 @@ class LiveSession:
         segments = sorted(self.dir.glob("seg_*.ts"))
         if not segments:
             return
-        config.STILLS_DIR.mkdir(parents=True, exist_ok=True)
+        self.stills_dir.mkdir(parents=True, exist_ok=True)
         proc = await asyncio.create_subprocess_exec(
             config.FFMPEG, "-v", "error", "-y", "-i", str(segments[-1]), "-frames:v", "1", "-q:v", "3",
-            str(config.STILLS_DIR / f"{self.key}.jpg"),
+            str(self.stills_dir / f"{self.key}.jpg"),
             stdout=asyncio.subprocess.DEVNULL, stderr=asyncio.subprocess.DEVNULL,
         )
         await proc.wait()
@@ -216,10 +217,27 @@ class LiveSession:
         shutil.rmtree(self.dir, ignore_errors=True)
 
 
+class LiveLimitError(Exception):
+    pass
+
+
 class LiveManager:
-    def __init__(self) -> None:
+    """Live sessions of one Blink account. All managers share the server-wide stream limit."""
+
+    _all: "set[LiveManager]" = set()
+
+    def __init__(self, folder: Path) -> None:
+        self.folder = folder
         self.sessions: Dict[str, LiveSession] = {}
         self._lock = asyncio.Lock()
+        LiveManager._all.add(self)
+
+    def active(self) -> int:
+        return sum(1 for s in self.sessions.values() if not s.stopped)
+
+    @classmethod
+    def active_total(cls) -> int:
+        return sum(m.active() for m in cls._all)
 
     async def start(self, key: str, camera: BlinkCamera) -> LiveSession:
         async with self._lock:
@@ -229,7 +247,13 @@ class LiveManager:
                 return existing
             if existing:
                 await existing.stop()
-            session = LiveSession(key, camera)
+                self.sessions.pop(key, None)
+            if self.active() >= config.MAX_LIVE_PER_USER:
+                raise LiveLimitError(f"You can watch up to {config.MAX_LIVE_PER_USER} cameras live at once. "
+                                     "Close another live view first.")
+            if LiveManager.active_total() >= config.MAX_LIVE_TOTAL:
+                raise LiveLimitError("The server is busy with other live views. Try again in a minute.")
+            session = LiveSession(key, camera, self.folder)
             self.sessions[key] = session
             try:
                 await session.start()
@@ -251,3 +275,6 @@ class LiveManager:
     async def stop_all(self) -> None:
         for key in list(self.sessions):
             await self.stop(key)
+
+    def close(self) -> None:
+        LiveManager._all.discard(self)

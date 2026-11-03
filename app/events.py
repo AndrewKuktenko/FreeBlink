@@ -6,10 +6,13 @@ import logging
 import time
 from typing import Any, Dict, List, Optional
 
-from . import config, settings
+from pathlib import Path
+
+from . import config
 from .blink_service import READY, BlinkService, _ts
 from .detector import ClipAnalysis, Detector, iou
 from .notifier import Notifier
+from .settings import UserSettings
 
 log = logging.getLogger(__name__)
 
@@ -18,8 +21,8 @@ EMOJI = {"person": "bust_in_silhouette", "car": "red_car", "truck": "truck", "do
 
 
 class EventStore:
-    def __init__(self) -> None:
-        self.dir = config.EVENTS_DIR
+    def __init__(self, folder: Path) -> None:
+        self.dir = folder
         self.index_file = self.dir / "events.json"
         self.seen_file = self.dir / "seen_clips.json"
         self.dir.mkdir(parents=True, exist_ok=True)
@@ -66,13 +69,25 @@ class EventStore:
         return path.read_bytes() if path.exists() else None
 
 
+_detector: Optional[Detector] = None
+
+
+def shared_detector() -> Detector:
+    """One YOLO model for all accounts; it only loads if DETECT_ENGINE=yolo."""
+    global _detector
+    if _detector is None:
+        _detector = Detector()
+    return _detector
+
+
 class EventWatcher:
-    def __init__(self, service: BlinkService, notifier: Notifier) -> None:
+    def __init__(self, service: BlinkService, notifier: Notifier, folder: Path, settings: UserSettings) -> None:
         self.service = service
         self.notifier = notifier
-        self.detector = Detector()  # YOLO; loads its model only if DETECT_ENGINE=yolo
+        self.settings = settings
+        self.detector = shared_detector()
         self._claude = None
-        self.store = EventStore()
+        self.store = EventStore(folder / "events")
         self._task: Optional[asyncio.Task] = None
         self._cooldown: Dict[str, float] = {}
         self.last_check: Optional[float] = None
@@ -95,12 +110,12 @@ class EventWatcher:
             "engine": config.DETECT_ENGINE,
             "model": config.CLAUDE_MODEL if config.DETECT_ENGINE == "claude" else config.DETECT_MODEL,
             "effort": config.CLAUDE_EFFORT if config.DETECT_ENGINE == "claude" else None,
-            "api_key_set": bool(settings.anthropic_api_key()),
+            "api_key_set": bool(self.settings.anthropic_api_key()),
             "classes": config.DETECT_CLASSES,
             "min_confidence": config.DETECT_MIN_CONFIDENCE,
             "cameras": config.DETECT_CAMERAS or "all",
             "notifications": self.notifier.enabled,
-            "ntfy_topic": settings.ntfy_topic() or None,
+            "ntfy_topic": self.settings.ntfy_topic(),
             "ntfy_server": config.NTFY_SERVER,
             "poll_interval": config.DETECT_POLL_INTERVAL,
             "last_check": self.last_check,
@@ -153,6 +168,9 @@ class EventWatcher:
     async def _process(self, item: Dict[str, Any]) -> None:
         clip_id = str(item["id"])
         camera = item.get("camera") or "Camera"
+        if config.DETECT_ENGINE == "claude" and self._claude_analyzer() is None:
+            await self._notify_plain(item)  # no key: don't download clips we can't describe
+            return
         video = await self.service.clip_video(clip_id)
         if not video:
             log.warning("Could not download clip %s from %s", clip_id, camera)
@@ -186,16 +204,13 @@ class EventWatcher:
         self.store.add(event, analysis.snapshot)
 
     def _claude_analyzer(self):
-        key = settings.anthropic_api_key()
-        if self._claude is None or self._claude.api_key != key:  # key changed in the dashboard
+        key = self.settings.anthropic_api_key()
+        if not key:
+            return None
+        if self._claude is None or self._claude.api_key != key:  # key changed in Settings
             from .claude_vision import ClaudeAnalyzer
 
-            if not key:
-                raise RuntimeError("Claude is not configured: add your Anthropic API key in Settings")
-            try:
-                self._claude = ClaudeAnalyzer(key)
-            except Exception as exc:  # the SDK raises here when no credential is configured
-                raise RuntimeError(f"Claude is not configured: set ANTHROPIC_API_KEY in .env ({exc})")
+            self._claude = ClaudeAnalyzer(key)
         return self._claude
 
     async def _process_claude(self, item: Dict[str, Any], video: bytes) -> None:
@@ -204,9 +219,13 @@ class EventWatcher:
 
         clip_id = str(item["id"])
         camera = item.get("camera") or "Camera"
+        analyzer = self._claude_analyzer()
+        if analyzer is None:  # key removed while the clip downloaded
+            await self._notify_plain(item)
+            return
         started = time.monotonic()
         try:
-            verdict = await self._claude_analyzer().analyze_clip(video, camera)
+            verdict = await analyzer.analyze_clip(video, camera)
         except anthropic.BadRequestError as exc:
             # Something about this clip the API won't take; record it and move on.
             log.warning("Claude rejected clip %s: %s", clip_id, exc.message)
@@ -246,6 +265,16 @@ class EventWatcher:
                 log.warning("Notification failed: %s", exc)
                 self.last_error = f"Notification failed: {exc}"
         self.store.add(event, verdict.snapshot)
+
+    async def _notify_plain(self, item: Dict[str, Any]) -> None:
+        if not self.notifier.enabled:
+            return
+        camera = item.get("camera") or "Camera"
+        try:
+            await self.notifier.send(f"{camera}: Motion", "New motion clip. Add a Claude API key in "
+                                     "FreeBlink Settings to get a description.", tags="movie_camera")
+        except Exception as exc:  # noqa: BLE001
+            log.warning("Notification failed: %s", exc)
 
     def _split_stationary(self, camera: str, analysis: ClipAnalysis):
         """Return ({label: conf} worth alerting on, [labels ignored as parked]).

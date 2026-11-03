@@ -27,15 +27,25 @@ def _load_dotenv() -> None:
 _load_dotenv()
 
 DATA_DIR = Path(os.environ.get("BLINK_DATA_DIR", ROOT / "data"))
-CREDENTIALS_FILE = DATA_DIR / "blink_credentials.json"
-LIVE_DIR = DATA_DIR / "live"
+USERS_DIR = DATA_DIR / "users"  # one folder per Blink account
+MODELS_DIR = DATA_DIR / "models"
+SESSIONS_FILE = DATA_DIR / "sessions.json"
+# Encrypts Blink tokens and API keys at rest. Generated into data/secret.key when unset.
+SECRET_KEY = os.environ.get("SECRET_KEY", "")
 
-# Protects the web UI itself. Required whenever HOST is not localhost.
+# Optional extra gate in front of the whole site (HTTP Basic). Leave empty for a public site.
 APP_USERNAME = os.environ.get("APP_USERNAME", "admin")
 APP_PASSWORD = os.environ.get("APP_PASSWORD", "")
 
 HOST = os.environ.get("HOST", "127.0.0.1")
 PORT = int(os.environ.get("PORT", "8000"))
+
+SESSION_DAYS = int(os.environ.get("SESSION_DAYS", "30"))
+LOGIN_ATTEMPTS = int(os.environ.get("LOGIN_ATTEMPTS", "8"))  # per IP per 15 minutes
+MAX_LIVE_PER_USER = int(os.environ.get("MAX_LIVE_PER_USER", "2"))
+MAX_LIVE_TOTAL = int(os.environ.get("MAX_LIVE_TOTAL", "8"))
+# Stop watching accounts nobody has opened for this many days (saves Blink API calls).
+INACTIVE_DAYS = int(os.environ.get("INACTIVE_DAYS", "60"))
 
 # How often to poll Blink for new state (seconds). Blink throttles aggressive polling.
 REFRESH_INTERVAL = int(os.environ.get("REFRESH_INTERVAL", "60"))
@@ -44,17 +54,12 @@ FFMPEG = os.environ.get("FFMPEG", "ffmpeg")
 # Stop a live view when no browser has fetched it for this many seconds.
 LIVE_IDLE_TIMEOUT = int(os.environ.get("LIVE_IDLE_TIMEOUT", "20"))
 
-CLIPS_DIR = DATA_DIR / "clips"  # cache of downloaded clip videos
-CLIP_THUMBS_DIR = DATA_DIR / "clip_thumbs"
-EVENTS_DIR = DATA_DIR / "events"
-MODELS_DIR = DATA_DIR / "models"
-STILLS_DIR = DATA_DIR / "stills"  # last live-view frame per camera
 # Degrees moved per D-pad press on a Blink Mini Pan-Tilt Mount.
 PAN_STEP = int(os.environ.get("PAN_STEP", "15"))
 TILT_STEP = int(os.environ.get("TILT_STEP", "10"))
 
 # ---------- AI object detection ----------
-# "claude" (Claude vision via the Anthropic API, needs ANTHROPIC_API_KEY) or "yolo" (local model, free).
+# "claude" (each user adds their own Anthropic API key in Settings) or "yolo" (local model, free).
 DETECT_ENGINE = os.environ.get("DETECT_ENGINE", "claude").strip().lower()
 CLAUDE_MODEL = os.environ.get("AI_MODEL", "claude-sonnet-5-5")
 CLAUDE_EFFORT = os.environ.get("AI_EFFORT", "low")

@@ -2,11 +2,11 @@
 
 import base64
 import logging
-from typing import Optional
+from typing import Callable, Optional
 
 from aiohttp import ClientSession
 
-from . import config, settings
+from . import config
 
 log = logging.getLogger(__name__)
 
@@ -21,16 +21,17 @@ def _header(value: str) -> str:
 
 
 class Notifier:
-    def __init__(self, session: ClientSession) -> None:
+    def __init__(self, session: ClientSession, topic: Callable[[], str]) -> None:
         self.session = session
+        self.topic = topic
 
     @property
     def enabled(self) -> bool:
-        return bool(settings.ntfy_topic())
+        return bool(self.topic())
 
     @property
     def target(self) -> str:
-        return f"{config.NTFY_SERVER.rstrip('/')}/{settings.ntfy_topic()}"
+        return f"{config.NTFY_SERVER.rstrip('/')}/{self.topic()}"
 
     async def send(
         self,
@@ -41,7 +42,7 @@ class Notifier:
         priority: int = 4,
     ) -> None:
         if not self.enabled:
-            raise RuntimeError("Notifications are off: set NTFY_TOPIC in .env")
+            raise RuntimeError("Notifications are off: no ntfy topic set")
         headers = {
             "Title": _header(title),
             "Message": _header(message),
