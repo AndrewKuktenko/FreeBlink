@@ -1,4 +1,6 @@
-# FreeBlink + Caddy (automatic HTTPS). Configure DOMAIN in .env, then: docker compose up -d
+# FreeBlink + one HTTPS front end, chosen with COMPOSE_PROFILES in .env:
+#   tunnel  - Cloudflare Tunnel (recommended): set TUNNEL_TOKEN, no open ports needed
+#   caddy   - Caddy with Let's Encrypt: set DOMAIN, open ports 80/443
 services:
   app:
     build: .
@@ -11,9 +13,19 @@ services:
       BLINK_DATA_DIR: /data
     volumes:
       - freeblink-data:/data
-    # Not published: only Caddy can reach it.
+    # Not published: only the front end can reach it.
+
+  cloudflared:
+    profiles: [tunnel]
+    image: cloudflare/cloudflared:latest
+    restart: unless-stopped
+    depends_on: [app]
+    command: tunnel --no-autoupdate run
+    environment:
+      TUNNEL_TOKEN: ${TUNNEL_TOKEN:-}
 
   caddy:
+    profiles: [caddy]
     image: caddy:2.10
     restart: unless-stopped
     depends_on: [app]
@@ -22,7 +34,7 @@ services:
       - "443:443"
       - "443:443/udp"
     environment:
-      DOMAIN: ${DOMAIN:?Set DOMAIN in .env, e.g. DOMAIN=freeblink.duckdns.org}
+      DOMAIN: ${DOMAIN:-localhost}
     volumes:
       - ./deploy/Caddyfile:/etc/caddy/Caddyfile:ro
       - caddy-data:/data

@@ -22,17 +22,21 @@ Anyone signs in with their **own Blink account** (email, password and Blink's ve
 
 ## Deploy to a server (free)
 
-FreeBlink needs a server that runs all the time (it watches for clips and runs ffmpeg), so serverless hosts that sleep won't work. **Oracle Cloud Always Free** runs it at no cost: up to 4 ARM CPUs and 24 GB RAM.
+FreeBlink needs a server that runs all the time (it watches for clips and runs ffmpeg), so serverless hosts like Cloudflare Workers won't work. The recommended setup costs only the domain:
 
-1. **Create the server.** Sign up at [oracle.com/cloud/free](https://www.oracle.com/cloud/free/), then upgrade the account to *Pay As You Go*. Always Free resources stay free, and Oracle stops reclaiming idle instances. Create a compute instance: image *Ubuntu 24.04*, shape *VM.Standard.A1.Flex* (2 OCPU / 12 GB is plenty). Download the SSH key.
-2. **Open the cloud firewall.** *Networking → Virtual cloud networks → your VCN → Security Lists → Default* → add ingress rules for **TCP 80** and **TCP 443** from `0.0.0.0/0`.
-3. **Get a domain.** Free: create a name at [duckdns.org](https://www.duckdns.org) and set its IP to the server's public IP. Or point an A record of your own domain at it.
-4. **Install FreeBlink.** SSH in (`ssh ubuntu@SERVER_IP`) and run:
+```
+users ─https─> freeblink.yourdomain.com ─> Cloudflare (HTTPS) ─tunnel─> Oracle Cloud Always Free server ─> FreeBlink (Docker)
+```
+
+1. **Domain:** buy one in the Cloudflare dashboard (*Domain Registration → Register Domains*).
+2. **Tunnel:** *Zero Trust → Networks → Tunnels → Create a tunnel → Cloudflared*. Copy the token from the install command, then add a public hostname `freeblink.yourdomain.com` with service `HTTP` → `app:8000`.
+3. **Server:** in Oracle Cloud (free account, upgraded to *Pay As You Go* so idle instances aren't reclaimed), create an *Ubuntu 24.04* instance with shape *VM.Standard.A1.Flex* (2 OCPU, 12 GB).
+4. **Install:** SSH in and run
    ```bash
-   curl -fsSL https://raw.githubusercontent.com/AndrewKuktenko/FreeBlink/main/deploy/setup.sh | bash -s -- your-name.duckdns.org
+   curl -fsSL https://raw.githubusercontent.com/AndrewKuktenko/FreeBlink/main/deploy/setup.sh | bash -s -- <TUNNEL_TOKEN>
    ```
-   This installs Docker, opens ports 80/443 in Ubuntu's firewall, and starts FreeBlink behind Caddy, which gets an HTTPS certificate automatically.
-5. Open `https://your-name.duckdns.org` and sign in with Blink.
+
+No ports need to be opened; the server only makes outgoing connections. Without Cloudflare, pass a domain instead of the token (`... | bash -s -- freeblink.duckdns.org`). That uses Caddy with Let's Encrypt and needs ports 80/443 open.
 
 Update: `cd ~/FreeBlink && git pull && sudo docker compose up -d --build`. Logs: `sudo docker compose logs -f`. All data lives in the `freeblink-data` Docker volume; back it up together with `secret.key` inside it.
 
