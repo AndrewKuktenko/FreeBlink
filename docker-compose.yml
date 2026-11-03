@@ -3,6 +3,8 @@
 #   caddy   - Caddy with Let's Encrypt: set DOMAIN, open ports 80/443
 services:
   app:
+    # Servers pull the image GitHub Actions publishes; `docker compose up --build` builds it locally instead.
+    image: ${FREEBLINK_IMAGE:-ghcr.io/andrewkuktenko/freeblink:latest}
     build: .
     restart: unless-stopped
     env_file:

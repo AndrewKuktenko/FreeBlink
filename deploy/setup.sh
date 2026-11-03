@@ -5,16 +5,21 @@
 #     curl -fsSL https://raw.githubusercontent.com/AndrewKuktenko/FreeBlink/main/deploy/setup.sh | bash -s -- <TUNNEL_TOKEN>
 #   Caddy + Let's Encrypt (needs ports 80/443 open and the domain pointing at this server):
 #     curl -fsSL https://raw.githubusercontent.com/AndrewKuktenko/FreeBlink/main/deploy/setup.sh | bash -s -- your.domain
+#   Re-running it without an argument keeps the existing ~/FreeBlink/.env.
+#
+# It also installs a cron job that keeps the server on the latest version (deploy/update.sh, every 5 minutes).
 set -euo pipefail
 
 ARG="${1:-}"
-if [ -z "$ARG" ]; then
+if [ -z "$ARG" ] && ! grep -qE "^(TUNNEL_TOKEN|DOMAIN)=.+" "$HOME/FreeBlink/.env" 2>/dev/null; then
   read -rp "Cloudflare tunnel token (or a domain for Caddy): " ARG < /dev/tty
+  [ -n "$ARG" ] || { echo "Give a tunnel token or a domain."; exit 1; }
 fi
-[ -n "$ARG" ] || { echo "Give a tunnel token or a domain."; exit 1; }
 
 # Tunnel tokens are long base64 strings (start with eyJ); anything else is treated as a domain.
-if [[ "$ARG" == eyJ* && ${#ARG} -gt 100 ]]; then MODE=tunnel; else MODE=caddy; fi
+if [ -z "$ARG" ]; then MODE=keep
+elif [[ "$ARG" == eyJ* && ${#ARG} -gt 100 ]]; then MODE=tunnel
+else MODE=caddy; fi
 
 set_env() {  # set_env KEY VALUE  -> writes/updates KEY=VALUE in .env
   if grep -q "^$1=" .env; then sed -i "s|^$1=.*|$1=$2|" .env; else echo "$1=$2" >> .env; fi
@@ -43,6 +48,15 @@ if [ "$MODE" = caddy ]; then
   fi
 fi
 
+# Small servers (e.g. Oracle's 1 GB micro) need swap for ffmpeg and image updates.
+MEM_MB=$(awk '/MemTotal/ {print int($2/1024)}' /proc/meminfo)
+if [ "$MEM_MB" -lt 2000 ] && ! swapon --show | grep -q .; then
+  echo "==> Adding 2 GB of swap"
+  sudo fallocate -l 2G /swapfile && sudo chmod 600 /swapfile
+  sudo mkswap /swapfile >/dev/null && sudo swapon /swapfile
+  grep -q "^/swapfile" /etc/fstab || echo "/swapfile none swap sw 0 0" | sudo tee -a /etc/fstab >/dev/null
+fi
+
 echo "==> Getting FreeBlink"
 if [ ! -d "$HOME/FreeBlink" ]; then
   git clone https://github.com/AndrewKuktenko/FreeBlink.git "$HOME/FreeBlink"
@@ -55,13 +69,25 @@ chmod 600 .env
 if [ "$MODE" = tunnel ]; then
   set_env COMPOSE_PROFILES tunnel
   set_env TUNNEL_TOKEN "$ARG"
-else
+elif [ "$MODE" = caddy ]; then
   set_env COMPOSE_PROFILES caddy
   set_env DOMAIN "$ARG"
+elif grep -q "^TUNNEL_TOKEN=." .env; then MODE=tunnel
+else MODE=caddy; fi
+
+echo "==> Starting FreeBlink"
+if sudo docker compose pull -q; then
+  sudo docker compose up -d --no-build --remove-orphans
+else
+  echo "Couldn't download the published image; building it here instead (takes a few minutes)."
+  sudo docker compose up -d --build --remove-orphans
 fi
 
-echo "==> Starting FreeBlink (the first build takes a few minutes)"
-sudo docker compose up -d --build
+echo "==> Turning on automatic updates (every 5 minutes)"
+chmod +x "$PWD/deploy/update.sh"
+sudo touch /var/log/freeblink-update.log && sudo chown "$(id -un)" /var/log/freeblink-update.log
+echo "*/5 * * * * $(id -un) $PWD/deploy/update.sh >> /var/log/freeblink-update.log 2>&1" \
+  | sudo tee /etc/cron.d/freeblink >/dev/null
 sleep 5
 sudo docker compose ps
 
@@ -73,7 +99,7 @@ Open the public hostname you set in Cloudflare (e.g. https://freeblink.yourdomai
 In Cloudflare Zero Trust > Networks > Tunnels, the tunnel should show as HEALTHY.
 
 Logs:    cd ~/FreeBlink && sudo docker compose logs -f
-Update:  cd ~/FreeBlink && git pull && sudo docker compose up -d --build
+Updates: automatic, every 5 minutes (log: /var/log/freeblink-update.log)
 MSG
 else
   IP=$(curl -fsS https://api.ipify.org || echo "this server's public IP")
@@ -86,6 +112,6 @@ If the page doesn't load:
   - In Oracle Cloud, add ingress rules for TCP 80 and 443 from 0.0.0.0/0 to the VCN security list.
 
 Logs:    cd ~/FreeBlink && sudo docker compose logs -f
-Update:  cd ~/FreeBlink && git pull && sudo docker compose up -d --build
+Updates: automatic, every 5 minutes (log: /var/log/freeblink-update.log)
 MSG
 fi
