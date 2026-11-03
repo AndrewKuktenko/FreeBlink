@@ -1,98 +1,168 @@
+<div align="center">
+
+<img src="docs/icon.svg" width="88" height="88" alt="FreeBlink icon">
+
 # FreeBlink
 
-A self-hosted web dashboard for your Blink cameras, doorbell and Sync Module, with AI descriptions of every motion clip pushed to your phone:
+**Your Blink cameras in the browser, with a short AI description of every motion clip sent to your phone.**
 
-- See every system (Sync Module, standalone Minis, doorbells) and its cameras
-- Arm and disarm systems; turn motion detection on and off per camera
-- Take a new photo and see the latest thumbnails, battery, temperature and Wi-Fi
-- **Live view** in the browser
-- Browse and play recent clips (cloud and Sync Module USB), each with an AI description
-- Push a short AI description of every motion clip to your phone
+[![Build and deploy](https://github.com/AndrewKuktenko/FreeBlink/actions/workflows/deploy.yml/badge.svg)](https://github.com/AndrewKuktenko/FreeBlink/actions/workflows/deploy.yml)
+[![Image](https://img.shields.io/badge/image-ghcr.io%2Fandrewkuktenko%2Ffreeblink-2496ED?logo=docker&logoColor=white)](https://github.com/AndrewKuktenko/FreeBlink/pkgs/container/freeblink)
+![Python](https://img.shields.io/badge/python-3.12-3776AB?logo=python&logoColor=white)
+![Claude](https://img.shields.io/badge/AI-Claude%20Sonnet%205.5-D97757)
 
-Built on [blinkpy](https://github.com/fronzbot/blinkpy), the reverse-engineered library Home Assistant uses. Blink has **no official API**, so things can break when Blink changes its servers. Upgrading blinkpy (`.venv/bin/pip install -U blinkpy`) is usually the fix.
+[**Open FreeBlink**](https://freeblink.app) · [Deploy your own](#deploy-your-own-free) · [Run locally](#run-locally) · [How it works](#how-it-works)
 
-## Accounts
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/screenshots/cameras-dark.jpg">
+  <img src="docs/screenshots/cameras-light.jpg" alt="FreeBlink cameras view" width="100%">
+</picture>
 
-Anyone signs in with their **own Blink account** (email, password and Blink's verification code). There are no separate FreeBlink accounts. Each Blink account gets its own isolated space on the server: cameras, clips, AI descriptions, notification topic and Claude key. One account can never see another's cameras.
+</div>
 
-- **Passwords** go to Blink once and are never stored. Blink's sign-in token is stored **encrypted** (Fernet, key in `data/secret.key` or `SECRET_KEY`).
-- **Sign out on this device** ends the browser session. The account keeps being watched, so phone notifications continue.
-- **Delete my FreeBlink data** (Settings) stops watching, forgets the Blink token and erases that account's clips, descriptions and settings.
-- Sign-in attempts are rate-limited per IP, and live views are limited per account (`MAX_LIVE_PER_USER`) and per server (`MAX_LIVE_TOTAL`).
+## Features
 
-## Deploy to a server (free)
+|  |  |
+| --- | --- |
+| 🎥 **Live view** | Watch any camera in the browser (HLS). On a Mini with the Pan-Tilt mount, steer it with a D-pad or the arrow keys. |
+| ✨ **AI clip descriptions** | Claude watches every new motion clip and writes a one-line headline and a short description, like *"A courier leaves a package at the front door."* |
+| 📱 **Phone notifications** | Each description is pushed to your phone with the best frame attached, through the free [ntfy](https://ntfy.sh) app. |
+| 🗂️ **Clips** | Cloud clips and Sync Module USB clips in one timeline, playable in the browser. |
+| 🛡️ **Control** | Arm and disarm systems, turn motion detection on and off per camera, take a new photo. Battery, temperature and Wi-Fi at a glance. |
+| 👥 **Multi-user** | Anyone signs in with their own Blink account and only ever sees their own cameras. |
+| 🌗 **Feels native** | An iOS-style interface with dark mode, made for phones and desktop. |
 
-FreeBlink needs a server that runs all the time (it watches for clips and runs ffmpeg), so serverless hosts like Cloudflare Workers won't work. The recommended setup costs only the domain:
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/screenshots/phone-dark.jpg">
+  <img src="docs/screenshots/phone-light.jpg" alt="FreeBlink on a phone: cameras, clips, clip player and settings" width="100%">
+</picture>
 
+## Get started
+
+1. Open **[freeblink.app](https://freeblink.app)** (or [your own server](#deploy-your-own-free)) and sign in with your Blink email, password and the code Blink sends you.
+2. **Optional, for AI descriptions:** in *Settings*, paste a [Claude API key](https://platform.claude.com/settings/keys). Usage is billed to your own Anthropic account, a fraction of a cent per clip.
+3. **Phone alerts:** install **ntfy** ([iPhone](https://apps.apple.com/app/ntfy/id1625396347) · [Android](https://play.google.com/store/apps/details?id=io.heckel.ntfy)), tap **+** and subscribe to the topic shown in *Settings*. Then press *Send test notification*.
+
+Without a Claude key you still get a plain "Motion" notification for each clip.
+
+## How it works
+
+```mermaid
+flowchart LR
+  B[Browser] -- HTTPS --> CF[Cloudflare]
+  CF -- tunnel --> APP
+  subgraph Server [Your server, Docker]
+    APP[FreeBlink<br/>FastAPI] --> FF[ffmpeg]
+  end
+  APP <-- blinkpy --> BL[(Blink cloud)]
+  APP -- 4 frames --> CL[Claude API]
+  APP -- push --> N[ntfy] --> P[📱 Phone]
 ```
-users ─https─> freeblink.yourdomain.com ─> Cloudflare (HTTPS) ─tunnel─> Oracle Cloud Always Free server ─> FreeBlink (Docker)
+
+- **Clips:** every 30 seconds FreeBlink checks Blink's cloud and the Sync Module's USB drive for new motion clips. For each one it sends 4 frames (640 px wide) to Claude Sonnet 5.5, which returns a headline and a description of at most 30 words. That's about 2,000 input and 75 output tokens per clip.
+- **Live view:** Blink's live stream (MPEG-TS over its `immis` protocol) goes through ffmpeg to HLS, then to the browser with hls.js. Expect 10–20 s to connect, because battery cameras have to wake up. Streams stop about 20 s after the last viewer leaves, to save batteries.
+- **Pan-Tilt mount:** commands go over the live-view socket, using the protocol recovered by [blink-camera-mcp](https://github.com/AbhijatSaxena/blink-camera-mcp).
+- **Blink:** FreeBlink is built on [blinkpy](https://github.com/fronzbot/blinkpy), the library Home Assistant uses. Blink has no official API, so a Blink change can break things until blinkpy catches up.
+
+## Privacy and security
+
+- **Your password goes to Blink once and is never stored.** Blink's sign-in token and your Claude key are stored encrypted (Fernet).
+- Every Blink account gets its own isolated space: cameras, clips, descriptions, notification topic and key. One account can never see another's cameras.
+- Browsers hold a random session cookie; the server keeps only its hash. Cross-site requests are rejected, sign-in attempts are rate-limited per IP, and live views are capped per account and per server.
+- **Sign out on this device** ends the browser session; alerts keep coming. **Delete my FreeBlink data** (Settings) stops watching and erases everything for that account.
+
+## Deploy your own (free)
+
+FreeBlink needs a server that's always on, because it watches for clips and runs ffmpeg. The setup below costs only a domain (about $8 a year). The server has no open ports; it only makes outgoing connections.
+
+```mermaid
+flowchart LR
+  U[Users] -- https://your.domain --> CF[Cloudflare<br/>HTTPS + tunnel] --> O[Oracle Cloud<br/>Always Free VM] --> D[FreeBlink<br/>Docker]
 ```
 
 1. **Domain:** buy one in the Cloudflare dashboard (*Domain Registration → Register Domains*).
-2. **Tunnel:** *Zero Trust → Networks → Tunnels → Create a tunnel → Cloudflared*. Copy the token from the install command, then add a public hostname `freeblink.yourdomain.com` with service `HTTP` → `app:8000`.
-3. **Server:** in Oracle Cloud (free account, upgraded to *Pay As You Go* so idle instances aren't reclaimed), create an *Ubuntu 24.04* instance with shape *VM.Standard.A1.Flex* (2 OCPU, 12 GB).
-4. **Install:** SSH in and run
+2. **Tunnel:** *Zero Trust → Networks → Tunnels → Create a tunnel → Cloudflared*. Copy the token from the Docker install command (it starts with `eyJ`). Add a published application route for your domain with service **HTTP** → `app:8000`.
+3. **Server:** create an [Oracle Cloud Always Free](https://www.oracle.com/cloud/free/) instance with **Ubuntu 24.04**. Use *VM.Standard.A1.Flex* (ARM, up to 4 CPUs / 24 GB) if there's capacity, otherwise *VM.Standard.E2.1.Micro* (1 GB) works too. Any other Linux server with Docker is fine as well.
+4. **Install:** paste this into the instance's *cloud-init script* field (Advanced options → Management) when you create it, or run it over SSH:
+
    ```bash
    curl -fsSL https://raw.githubusercontent.com/AndrewKuktenko/FreeBlink/main/deploy/setup.sh | bash -s -- <TUNNEL_TOKEN>
    ```
 
-No ports need to be opened; the server only makes outgoing connections. Without Cloudflare, pass a domain instead of the token (`... | bash -s -- freeblink.duckdns.org`). That uses Caddy with Let's Encrypt and needs ports 80/443 open.
+The script installs Docker, adds swap on small machines, starts FreeBlink and the Cloudflare connector, and turns on automatic updates. About 10 minutes later the tunnel shows **HEALTHY** and your domain serves the sign-in page.
 
-Update: `cd ~/FreeBlink && git pull && sudo docker compose up -d --build`. Logs: `sudo docker compose logs -f`. All data lives in the `freeblink-data` Docker volume; back it up together with `secret.key` inside it.
+<details>
+<summary>Without Cloudflare (Caddy + Let's Encrypt)</summary>
 
-## Run it locally
+Pass a domain instead of a token: `... | bash -s -- freeblink.example.com`. Point the domain's DNS at the server and open ports 80 and 443 in the cloud firewall. The script opens them in the server's own firewall.
+</details>
 
-Requirements: Python 3.10+ and `ffmpeg` (`brew install ffmpeg`).
+### Automatic updates
+
+Every push to `main` deploys itself:
+
+1. **GitHub Actions** builds the Docker image, starts it and checks that it serves the app, then publishes it to `ghcr.io/andrewkuktenko/freeblink` for amd64 and arm64.
+2. **The server** runs `deploy/update.sh` every 5 minutes (cron). It pulls the latest code and image and restarts only the containers that changed.
+
+Data lives in the `freeblink-data` Docker volume and survives updates. To follow your fork instead, set `FREEBLINK_IMAGE=ghcr.io/<you>/freeblink:latest` in `~/FreeBlink/.env`.
+
+| Task | Command (on the server) |
+| --- | --- |
+| Update log | `cat /var/log/freeblink-update.log` |
+| App logs | `cd ~/FreeBlink && sudo docker compose logs -f app` |
+| Update now | `~/FreeBlink/deploy/update.sh` |
+| Back up | Copy the `freeblink-data` volume. It contains `secret.key`, which the encrypted tokens need. |
+
+## Run locally
+
+Requirements: Python 3.10+ and ffmpeg (`brew install ffmpeg`).
 
 ```bash
-cp .env.example .env    # optional; defaults run on http://127.0.0.1:8000
+git clone https://github.com/AndrewKuktenko/FreeBlink.git && cd FreeBlink
+cp .env.example .env   # optional; the defaults run on http://127.0.0.1:8000
 ./run.sh
 ```
 
-Or with Docker: set `DOMAIN=localhost` in `.env` and run `docker compose up -d --build`.
+Or with Docker: `docker compose up --build` builds the image locally.
 
-## How live view works
+<details>
+<summary>Settings (.env)</summary>
 
-```
-Blink cloud ──immis (TLS)──> blinkpy BlinkLiveStream ──MPEG-TS on 127.0.0.1:random──> ffmpeg ──HLS──> data/live/<camera>/ ──> browser (hls.js)
-```
+| Variable | Default | What it does |
+| --- | --- | --- |
+| `SECRET_KEY` | generated in `data/secret.key` | Encrypts Blink tokens and Claude keys |
+| `AI_MODEL` | `claude-sonnet-5-5` | Model that describes clips |
+| `AI_FRAMES`, `AI_FRAME_WIDTH` | `4`, `640` | Frames per clip and their width; below 640 px, distant people get missed |
+| `NTFY_SERVER` | `https://ntfy.sh` | Push server (self-hosted ntfy works) |
+| `MAX_LIVE_PER_USER`, `MAX_LIVE_TOTAL` | `2`, `8` | Concurrent live views |
+| `INACTIVE_DAYS` | `60` | Pause accounts nobody has opened for this long |
+| `DETECT_ENGINE` | `claude` | `yolo` labels objects locally instead (`pip install ultralytics`); no descriptions |
 
-- Expect 10–20 s to connect and a few seconds of delay. Battery cameras have to wake up first.
-- Blink ends live sessions after its own time limit, which depends on your plan and camera. The player then shows "Stream ended". Press *Live view* again to restart.
-- A stream stops automatically about 20 s after the last viewer closes it (`LIVE_IDLE_TIMEOUT`), because live view drains camera batteries quickly.
+The full list, with comments, is in [`.env.example`](.env.example).
+</details>
 
-## AI clip descriptions and phone notifications
-
-Every 30 s the app looks for new motion clips, in Blink's cloud and on the Sync Module's USB drive. For **every** new clip it sends 4 frames (640 px wide) to **Claude Sonnet 5.5** (effort `low`). Claude returns a short headline and a 1–2 sentence description (at most 30 words) of what happens. The description appears under the clip in *Clips* and is pushed to your phone with the best frame attached.
-
-- **Key:** each user pastes their own key in *Settings → Clip descriptions*; usage is billed to their Anthropic account. Create one at https://platform.claude.com/settings/keys (a Claude.ai subscription doesn't cover API calls). Without a key, users still get a plain "Motion" notification per clip.
-- **Phone:** install the **ntfy** app (iOS / Android), subscribe to the random topic FreeBlink created for the account (*Settings → Phone notifications*), and allow ntfy notifications in your phone's settings. Treat the topic like a password.
-- **Tokens:** about 2,000 input and 75 output tokens per clip (measured on 15 real clips). `AI_FRAMES` and `AI_FRAME_WIDTH` trade detail for cost; below 640 px, people far from the camera get missed.
-- **Refusals:** server-side refusal fallback (`fallbacks: "default"`) is on. If a safety classifier declines a request, it's retried on another model.
-- **Startup:** clips recorded before the app started are never described, so you won't get a flood of old notifications.
-- **Free alternative:** `DETECT_ENGINE=yolo` runs a local YOLO model instead (`pip install ultralytics`). It only labels objects; it doesn't describe them.
-
-## Blink Mini Pan-Tilt Mount
-
-During live view on a Mini with the mount, a D-pad appears (arrow keys work too), plus *Home*, *Set as home* and *360° overview*. The mount has no REST API. Commands go over the live-view socket, using the protocol recovered by [blink-camera-mcp](https://github.com/AbhijatSaxena/blink-camera-mcp) (MIT), see `app/pantilt.py`. The D-pad shows up only after the mount reports its position.
-
-## Layout
+## Project layout
 
 | Path | What it does |
 | --- | --- |
-| `app/tenants.py` | Accounts: per-Blink-account isolation, sessions, 2FA in progress, rate limits, deletion |
-| `app/blink_service.py` | One Blink session: login/2FA, encrypted token, polling, arm, snap, thumbnails, clips |
-| `app/live.py` | Live view: BlinkLiveStream → ffmpeg → HLS, with idle shutdown |
 | `app/main.py` | FastAPI routes, session cookies, cross-site request protection |
-| `Dockerfile`, `docker-compose.yml`, `deploy/` | Container, Caddy HTTPS, server setup script |
-| `static/` | Dashboard UI (plain HTML/CSS/JS) |
+| `app/tenants.py` | Accounts: per-Blink-account isolation, sessions, 2FA, rate limits, deletion |
+| `app/blink_service.py` | One Blink session: sign-in, encrypted token, polling, arm, photos, clips |
+| `app/events.py`, `app/claude_vision.py` | Clip watcher and Claude descriptions |
+| `app/live.py`, `app/pantilt.py` | Live view (Blink → ffmpeg → HLS) and the Pan-Tilt mount |
+| `static/` | The web app (plain HTML, CSS and JavaScript) |
+| `Dockerfile`, `docker-compose.yml`, `deploy/` | Container, Cloudflare Tunnel / Caddy, setup and auto-update scripts |
+| `.github/workflows/deploy.yml` | Build, smoke-test and publish the image |
 
-## Not covered yet
+**Not supported yet:** two-way talk on the doorbell (blinkpy doesn't implement it).
 
-- Two-way talk on the doorbell. blinkpy doesn't implement it.
+## Credits
+
+- [blinkpy](https://github.com/fronzbot/blinkpy) for the Blink API, and [blink-camera-mcp](https://github.com/AbhijatSaxena/blink-camera-mcp) (MIT) for the Pan-Tilt protocol.
+- The screenshots use demo data and photos from [Unsplash](https://unsplash.com) (Paul Evans, Dietmar Becker, Paul Jarvis, Luke Chesser, Florian Klauer), not real camera footage.
 
 ## Disclaimer
 
-FreeBlink is an unofficial personal project. It is not affiliated with, endorsed by or supported by Blink or Amazon. It uses Blink's private, undocumented API, so use it at your own risk.
+FreeBlink is an unofficial personal project. It is not affiliated with, endorsed by or supported by Blink or Amazon. It uses Blink's private, undocumented API, so use it at your own risk. Automated access to Blink accounts may conflict with Blink's terms of service.
 
-If you run a FreeBlink server for other people, you are holding their Blink sign-in tokens and home video. Keep the server updated, keep backups of the data volume private, and tell your users how to delete their data (Settings → Delete my FreeBlink data). Automated access to Blink accounts may conflict with Blink's terms of service.
+If you run a FreeBlink server for other people, you hold their Blink sign-in tokens and home video. Keep the server updated, keep backups of the data volume private, and tell your users how to delete their data.
