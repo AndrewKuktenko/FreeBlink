@@ -259,7 +259,7 @@ class EventWatcher:
                 await self.notifier.send(
                     f"{camera}: {title}", verdict.description, image=verdict.snapshot,
                     tags=",".join(EMOJI[s] for s in verdict.subjects if s in EMOJI),
-                    priority=5 if "person" in verdict.subjects else 4)
+                    priority=5 if "person" in verdict.subjects else 4, clip=clip_id)
                 event["notified"] = True
             except Exception as exc:  # noqa: BLE001
                 log.warning("Notification failed: %s", exc)
@@ -272,7 +272,8 @@ class EventWatcher:
         camera = item.get("camera") or "Camera"
         try:
             await self.notifier.send(f"{camera}: Motion", "New motion clip. Add a Claude API key in "
-                                     "FreeBlink Settings to get a description.", tags="movie_camera")
+                                     "FreeBlink Settings to get a description.", tags="movie_camera",
+                                     clip=str(item["id"]))
         except Exception as exc:  # noqa: BLE001
             log.warning("Notification failed: %s", exc)
 

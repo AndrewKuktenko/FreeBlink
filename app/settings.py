@@ -55,6 +55,17 @@ class UserSettings:
             self._save(data)
         return data["ntfy_topic"]
 
+    def site_url(self) -> str:
+        """Address the owner opens FreeBlink at; notifications link back to it."""
+        return self._load().get("site_url", "")
+
+    def remember_site_url(self, url: str) -> None:
+        url = url.rstrip("/")
+        data = self._load()
+        if data.get("site_url") != url:
+            data["site_url"] = url
+            self._save(data)
+
     def set_ntfy_topic(self, topic: str) -> None:
         data = self._load()
         data["ntfy_topic"] = topic

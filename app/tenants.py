@@ -51,7 +51,7 @@ class Tenant:
         self.folder.mkdir(parents=True, exist_ok=True)
         if self.service.session is None:
             await self.service.startup()
-        notifier = Notifier(self.service.session, self.settings.ntfy_topic)
+        notifier = Notifier(self.service.session, self.settings.ntfy_topic, self.settings.site_url)
         self.watcher = EventWatcher(self.service, notifier, self.folder, self.settings)
         self.watcher.start()
         self.touch(force=True)

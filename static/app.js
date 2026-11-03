@@ -134,9 +134,24 @@ async function boot() {
   route(state);
 }
 
+// A notification links to /?clip=<id>: open that clip once signed in.
+const linkedClip = new URLSearchParams(location.search).get("clip");
+
+async function openLinkedClip() {
+  history.replaceState(null, "", location.pathname);
+  show("clips");
+  window.scrollTo({ top: 0 });
+  let clips = await loadClips();
+  let clip = clips?.find((c) => c.id === linkedClip);
+  if (!clip) clip = (await api("/api/clips?hours=168").catch(() => ({ clips: [] }))).clips.find((c) => c.id === linkedClip);
+  if (clip) openClip(clip);
+  else toast("That clip is no longer available", true);
+}
+
 function route(state) {
   if (state === "ready") {
-    openPage(currentView);
+    if (linkedClip && location.search) openLinkedClip();
+    else openPage(currentView);
     clearInterval(pollTimer);
     pollTimer = setInterval(() => {
       if (document.hidden || $("#player").open) return;
@@ -373,7 +388,10 @@ function openSheet(title) {
   $("#player-title").textContent = title;
   $("#player-ai").hidden = true;
   $("#ptz").hidden = true;
-  if (!$("#player").open) $("#player").showModal();
+  if (!$("#player").open) {
+    $("#player").showModal();
+    $("#player").focus();  // not the Done button: no focus ring when opened from a notification link
+  }
 }
 
 async function openLive(cam) {
@@ -488,7 +506,7 @@ async function loadClips(quiet = false) {
     if (!clips.length) {
       root.replaceChildren(el("div", { class: "empty" }, icon("clips"),
         el("strong", {}, "No clips"), el("p", {}, "Nothing was recorded in this period. New motion clips show up here within a minute.")));
-      return;
+      return clips;
     }
     const groups = new Map();
     for (const clip of clips) {
@@ -500,6 +518,7 @@ async function loadClips(quiet = false) {
       el("section", { class: "day" },
         el("h2", { class: "list-header prominent" }, label),
         el("div", { class: "clip-list" }, items.map(renderClip)))));
+    return clips;
   } catch (err) {
     if (request !== clipsRequest) return;
     root.replaceChildren(el("div", { class: "empty" }, icon("alert"), el("strong", {}, "Couldn't load clips"), el("p", {}, err.message)));

@@ -3,6 +3,7 @@
 import base64
 import logging
 from typing import Callable, Optional
+from urllib.parse import quote
 
 from aiohttp import ClientSession
 
@@ -21,9 +22,11 @@ def _header(value: str) -> str:
 
 
 class Notifier:
-    def __init__(self, session: ClientSession, topic: Callable[[], str]) -> None:
+    def __init__(self, session: ClientSession, topic: Callable[[], str],
+                 site: Callable[[], str] = lambda: "") -> None:
         self.session = session
         self.topic = topic
+        self.site = site
 
     @property
     def enabled(self) -> bool:
@@ -40,6 +43,7 @@ class Notifier:
         image: Optional[bytes] = None,
         tags: str = "",
         priority: int = 4,
+        clip: Optional[str] = None,
     ) -> None:
         if not self.enabled:
             raise RuntimeError("Notifications are off: no ntfy topic set")
@@ -50,8 +54,9 @@ class Notifier:
         }
         if tags:
             headers["Tags"] = tags
-        if config.PUBLIC_URL:
-            headers["Click"] = config.PUBLIC_URL
+        site = (config.PUBLIC_URL or self.site() or "").rstrip("/")
+        if site:  # tapping the notification opens the site, or the clip itself
+            headers["Click"] = f"{site}/?clip={quote(clip, safe='')}" if clip else site
         if config.NTFY_TOKEN:
             headers["Authorization"] = f"Bearer {config.NTFY_TOKEN}"
         if image:

@@ -88,6 +88,7 @@ async def current(request: Request) -> Tenant:
     tenant = await manager.for_session(request.cookies.get(SESSION_COOKIE))
     if tenant is None:
         raise HTTPException(401, "Not signed in.")
+    tenant.settings.remember_site_url(str(request.base_url))
     return tenant
 
 
@@ -400,6 +401,11 @@ async def live_file(key: str, filename: str, tenant: Tenant = Depends(current)):
 
 STATIC = config.ROOT / "static"
 app.mount("/static", StaticFiles(directory=STATIC), name="static")
+
+
+@app.get("/favicon.ico", include_in_schema=False)
+async def favicon():
+    return FileResponse(STATIC / "favicon.ico", headers={"Cache-Control": "public, max-age=86400"})
 
 
 @app.get("/")
