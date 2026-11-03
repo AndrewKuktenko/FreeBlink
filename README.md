@@ -22,15 +22,13 @@
 
 ## Features
 
-|  |  |
-| --- | --- |
-| 🎥 **Live view** | Watch any camera in the browser (HLS). On a Mini with the Pan-Tilt mount, steer it with a D-pad or the arrow keys. |
-| ✨ **AI clip descriptions** | Claude watches every new motion clip and writes a one-line headline and a short description, like *"A courier leaves a package at the front door."* |
-| 📱 **Phone notifications** | Each description is pushed to your phone with the best frame attached, through the free [ntfy](https://ntfy.sh) app. |
-| 🗂️ **Clips** | Cloud clips and Sync Module USB clips in one timeline, playable in the browser. |
-| 🛡️ **Control** | Arm and disarm systems, turn motion detection on and off per camera, take a new photo. Battery, temperature and Wi-Fi at a glance. |
-| 👥 **Multi-user** | Anyone signs in with their own Blink account and only ever sees their own cameras. |
-| 🌗 **Feels native** | An iOS-style interface with dark mode, made for phones and desktop. |
+- 🎥 **Live view**: Watch any camera in the browser (HLS). On a Mini with the Pan-Tilt mount, steer it with a D-pad or the arrow keys.
+- ✨ **AI clip descriptions**: Claude watches every new motion clip and writes a one-line headline and a short description, like *"A courier leaves a package at the front door."*
+- 📱 **Phone notifications**: Each description is pushed to your phone with the best frame attached, through the free [ntfy](https://ntfy.sh) app.
+- 🗂️ **Clips**: Cloud clips and Sync Module USB clips in one timeline, playable in the browser.
+- 🛡️ **Control**: Arm and disarm systems, turn motion detection on and off per camera, take a new photo. Battery, temperature and Wi-Fi at a glance.
+- 👥 **Multi-user**: Anyone signs in with their own Blink account and only ever sees their own cameras.
+- 🌗 **Feels native**: An iOS-style interface with dark mode, made for phones and desktop.
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/screenshots/phone-dark.jpg">
@@ -49,14 +47,10 @@ Without a Claude key you still get a plain "Motion" notification for each clip.
 
 ```mermaid
 flowchart LR
-  B[Browser] -- HTTPS --> CF[Cloudflare]
-  CF -- tunnel --> APP
-  subgraph Server [Your server, Docker]
-    APP[FreeBlink<br/>FastAPI] --> FF[ffmpeg]
-  end
-  APP <-- blinkpy --> BL[(Blink cloud)]
-  APP -- 4 frames --> CL[Claude API]
-  APP -- push --> N[ntfy] --> P[📱 Phone]
+  W[Browser] -- HTTPS --> CF[Cloudflare] -- tunnel --> F[FreeBlink<br/>+ ffmpeg]
+  F <-- blinkpy --> B[(Blink cloud)]
+  F -- 4 frames --> C[Claude API]
+  F -- push --> N[ntfy] --> P[Phone]
 ```
 
 - **Clips:** every 30 seconds FreeBlink checks Blink's cloud and the Sync Module's USB drive for new motion clips. For each one it sends 4 frames (640 px wide) to Claude Sonnet 5.5, which returns a headline and a description of at most 30 words. That's about 2,000 input and 75 output tokens per clip.
