@@ -1,5 +1,6 @@
 """HTTP API + static UI. Every /api route acts on the Blink account of the signed-in browser."""
 
+import hashlib
 import base64
 import logging
 import re
@@ -9,7 +10,7 @@ from typing import Optional
 from urllib.parse import urlparse
 
 from fastapi import Depends, FastAPI, HTTPException, Request
-from fastapi.responses import FileResponse, JSONResponse, Response
+from fastapi.responses import HTMLResponse, FileResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
@@ -420,6 +421,23 @@ async def favicon():
     return FileResponse(STATIC / "favicon.ico", headers={"Cache-Control": "public, max-age=86400"})
 
 
+def _versioned_index() -> str:
+    """index.html with a content hash on each /static/ URL, so a deploy never runs against
+    an old app.js still held by Cloudflare or the browser."""
+
+    def stamp(match: re.Match) -> str:
+        path = STATIC / match.group(1)
+        if not path.is_file():
+            return match.group(0)
+        digest = hashlib.sha256(path.read_bytes()).hexdigest()[:10]
+        return f'"/static/{match.group(1)}?v={digest}"'
+
+    return re.sub(r'"/static/([^"?]+)"', stamp, (STATIC / "index.html").read_text())
+
+
+INDEX_HTML = _versioned_index()
+
+
 @app.get("/")
 async def index():
-    return FileResponse(STATIC / "index.html", headers={"Cache-Control": "no-cache"})
+    return HTMLResponse(INDEX_HTML, headers={"Cache-Control": "no-cache"})
