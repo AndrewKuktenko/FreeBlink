@@ -400,7 +400,19 @@ async def live_file(key: str, filename: str, tenant: Tenant = Depends(current)):
 # ---------- UI ----------
 
 STATIC = config.ROOT / "static"
-app.mount("/static", StaticFiles(directory=STATIC), name="static")
+
+
+class RevalidatedStatic(StaticFiles):
+    """Browsers must check for a newer app.js/style.css on every load (a cheap 304 when unchanged),
+    or phones keep running an old version after a deploy."""
+
+    def file_response(self, *args, **kwargs):
+        response = super().file_response(*args, **kwargs)
+        response.headers["Cache-Control"] = "no-cache"
+        return response
+
+
+app.mount("/static", RevalidatedStatic(directory=STATIC), name="static")
 
 
 @app.get("/favicon.ico", include_in_schema=False)
