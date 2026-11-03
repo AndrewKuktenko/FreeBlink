@@ -26,6 +26,11 @@ def _load_dotenv() -> None:
 
 _load_dotenv()
 
+# Docker's env_file turns `KEY=   # comment` into the value "# comment". Treat that as unset.
+for _key, _value in list(os.environ.items()):
+    if _value.lstrip().startswith("# "):
+        del os.environ[_key]
+
 DATA_DIR = Path(os.environ.get("BLINK_DATA_DIR", ROOT / "data"))
 USERS_DIR = DATA_DIR / "users"  # one folder per Blink account
 MODELS_DIR = DATA_DIR / "models"
