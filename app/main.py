@@ -16,6 +16,7 @@ from pydantic import BaseModel
 
 from . import config, pantilt
 from .blink_service import NEEDS_2FA, READY, BlinkError
+from .faces import available_for, group_faces, person_view, shared_face_engine
 from .live import LiveLimitError
 from .settings import key_hint
 from .tenants import Tenant, TenantManager
@@ -212,6 +213,8 @@ async def clips(hours: int = 24, tenant: Tenant = Depends(current)):
         if event and event.get("description"):
             clip["ai"] = {"description": event["description"], "title": event.get("title"),
                           "subjects": event.get("subjects") or sorted(event.get("detected") or {})}
+        if event and event.get("people"):
+            clip["people"] = event["people"]
     return {"clips": items, "ai_enabled": bool(tenant.settings.anthropic_api_key())}
 
 
@@ -310,6 +313,99 @@ async def save_settings(body: SettingsBody, tenant: Tenant = Depends(current)):
             raise BlinkError("Topic must be 8-64 letters, digits, '-' or '_' (use something hard to guess).")
         tenant.settings.set_ntfy_topic(topic)
     return _settings_view(tenant)
+
+
+# ---------- familiar faces ----------
+
+class FacesToggleBody(BaseModel):
+    enabled: bool
+    consent: bool = False  # the owner confirms the people they add agreed to be recognized
+
+
+class EnrollBody(BaseModel):
+    token: str
+    name: str
+
+
+def _faces_view(tenant: Tenant):
+    available = available_for(tenant.service.username)
+    return {
+        "available": available,
+        "enabled": available and tenant.settings.faces_enabled(),
+        "people": [person_view(p) for p in tenant.faces.people()] if available else [],
+    }
+
+
+def _require_faces(tenant: Tenant) -> None:
+    if not available_for(tenant.service.username):
+        raise HTTPException(404, "Familiar faces aren't available on this server.")
+    if not tenant.settings.faces_enabled():
+        raise BlinkError("Turn on familiar faces in Settings first.")
+
+
+async def _offer_faces(tenant: Tenant, find) -> dict:
+    try:
+        faces = await find(shared_face_engine())
+    except Exception as exc:  # noqa: BLE001 - model download or decode problem
+        log.exception("Face search failed")
+        raise BlinkError(f"Couldn't look for faces: {exc}")
+    groups = group_faces(faces)
+    return {"faces": await tenant.faces.offer(groups), "seen": len(faces)}
+
+
+@app.get("/api/faces")
+async def faces_get(tenant: Tenant = Depends(current)):
+    return _faces_view(tenant)
+
+
+@app.post("/api/faces/settings")
+async def faces_settings(body: FacesToggleBody, tenant: Tenant = Depends(current)):
+    if not available_for(tenant.service.username):
+        raise HTTPException(404, "Familiar faces aren't available on this server.")
+    if body.enabled and not body.consent:
+        raise BlinkError("Confirm that the people you add agreed to be recognized.")
+    tenant.settings.set_faces_enabled(body.enabled)
+    return _faces_view(tenant)
+
+
+@app.get("/api/clips/{clip_id}/faces")
+async def clip_faces(clip_id: str, tenant: Tenant = Depends(current)):
+    _require_faces(tenant)
+    video = await tenant.service.clip_video(clip_id)
+    if video is None:
+        raise HTTPException(404, "Clip not available")
+    return await _offer_faces(tenant, lambda engine: engine.faces_in_clip(video))
+
+
+@app.post("/api/faces/photo")
+async def photo_faces(request: Request, tenant: Tenant = Depends(current)):
+    _require_faces(tenant)
+    if int(request.headers.get("content-length") or 0) > 15 * 1024 * 1024:
+        raise BlinkError("That photo is too large (15 MB at most).")
+    image = await request.body()
+    if not image:
+        raise BlinkError("Choose a photo first.")
+    if len(image) > 15 * 1024 * 1024:
+        raise BlinkError("That photo is too large (15 MB at most).")
+    return await _offer_faces(tenant, lambda engine: engine.faces_in_photo(image))
+
+
+@app.post("/api/faces/people")
+async def faces_enroll(body: EnrollBody, tenant: Tenant = Depends(current)):
+    _require_faces(tenant)
+    try:
+        tenant.faces.add(body.name, body.token)
+    except ValueError as exc:
+        raise BlinkError(str(exc))
+    return _faces_view(tenant)
+
+
+@app.delete("/api/faces/people/{person_id}")
+async def faces_remove(person_id: str, tenant: Tenant = Depends(current)):
+    if not available_for(tenant.service.username):
+        raise HTTPException(404)
+    tenant.faces.remove(person_id)  # allowed while switched off: deleting is always possible
+    return _faces_view(tenant)
 
 
 # ---------- live view ----------

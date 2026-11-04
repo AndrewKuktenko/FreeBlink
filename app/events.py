@@ -11,6 +11,7 @@ from pathlib import Path
 from . import config
 from .blink_service import READY, BlinkService, _ts
 from .detector import ClipAnalysis, Detector, iou
+from .faces import FaceAccount, available_for, match_clip, shared_face_engine
 from .notifier import Notifier
 from .settings import UserSettings
 
@@ -81,10 +82,12 @@ def shared_detector() -> Detector:
 
 
 class EventWatcher:
-    def __init__(self, service: BlinkService, notifier: Notifier, folder: Path, settings: UserSettings) -> None:
+    def __init__(self, service: BlinkService, notifier: Notifier, folder: Path, settings: UserSettings,
+                 faces: Optional[FaceAccount] = None) -> None:
         self.service = service
         self.notifier = notifier
         self.settings = settings
+        self.faces = faces or FaceAccount(folder)
         self.detector = shared_detector()
         self._claude = None
         self.store = EventStore(folder / "events")
@@ -168,15 +171,20 @@ class EventWatcher:
     async def _process(self, item: Dict[str, Any]) -> None:
         clip_id = str(item["id"])
         camera = item.get("camera") or "Camera"
-        if config.DETECT_ENGINE == "claude" and self._claude_analyzer() is None:
+        no_key = config.DETECT_ENGINE == "claude" and self._claude_analyzer() is None
+        if no_key and not self.faces_active():
             await self._notify_plain(item)  # no key: don't download clips we can't describe
             return
         video = await self.service.clip_video(clip_id)
         if not video:
             log.warning("Could not download clip %s from %s", clip_id, camera)
             return
+        people = await self._recognize(clip_id, video)
+        if no_key:
+            await self._notify_plain(item, people)
+            return
         if config.DETECT_ENGINE == "claude":
-            await self._process_claude(item, video)
+            await self._process_claude(item, video, people)
             return
         started = time.monotonic()
         analysis = await self.detector.analyze_clip(video)
@@ -196,11 +204,12 @@ class EventWatcher:
             "parked": parked,
             "all_labels": analysis.labels,
             "boxes": [[label, conf, box] for label, conf, box in analysis.boxes],
+            "people": people,
             "analyzed_at": time.time(),
             "notified": False,
         }
         if found and self.notifier.enabled:
-            event["notified"] = await self._notify(camera, found, analysis.snapshot)
+            event["notified"] = await self._notify(camera, found, analysis.snapshot, people)
         self.store.add(event, analysis.snapshot)
 
     def _claude_analyzer(self):
@@ -213,7 +222,34 @@ class EventWatcher:
             self._claude = ClaudeAnalyzer(key)
         return self._claude
 
-    async def _process_claude(self, item: Dict[str, Any], video: bytes) -> None:
+    def faces_active(self) -> bool:
+        return available_for(self.service.username) and self.settings.faces_enabled()
+
+    async def _recognize(self, clip_id: str, video: bytes) -> List[str]:
+        """Names of enrolled people seen in the clip ([] if face recognition is off or unsure)."""
+        if not self.faces_active():
+            return []
+        try:
+            templates = self.faces.templates()
+            if not templates:
+                return []
+            started = time.monotonic()
+            faces = await shared_face_engine().faces_in_clip(video)
+            matches = match_clip(faces, templates)
+            ids = [pid for pid, _ in matches]
+            if ids:
+                self.faces.mark_seen(ids)
+            names = self.faces.names(ids)
+            log.info("Clip %s: %d face(s), %d usable, %.1fs -> %s", clip_id, len(faces),
+                     sum(f.usable for f in faces), time.monotonic() - started,
+                     ", ".join(f"{n} {s:.2f}" for n, (_, s) in zip(names, matches)) or "no one familiar")
+            return names
+        except Exception as exc:  # noqa: BLE001 - never lose the description over a face problem
+            log.exception("Face recognition failed for clip %s", clip_id)
+            self.last_error = f"Face recognition failed: {exc}"
+            return []
+
+    async def _process_claude(self, item: Dict[str, Any], video: bytes, people: Optional[List[str]] = None) -> None:
         """Describe every clip and push the description to the phone."""
         import anthropic
 
@@ -225,7 +261,7 @@ class EventWatcher:
             return
         started = time.monotonic()
         try:
-            verdict = await analyzer.analyze_clip(video, camera)
+            verdict = await analyzer.analyze_clip(video, camera, people=people or [])
         except anthropic.BadRequestError as exc:
             # Something about this clip the API won't take; record it and move on.
             log.warning("Claude rejected clip %s: %s", clip_id, exc.message)
@@ -248,6 +284,7 @@ class EventWatcher:
             "title": verdict.title,
             "description": verdict.description,
             "subjects": verdict.subjects,
+            "people": people or [],
             "detected": {s: 1 for s in verdict.subjects},
             "tokens": [verdict.input_tokens, verdict.output_tokens],
             "analyzed_at": time.time(),
@@ -266,12 +303,13 @@ class EventWatcher:
                 self.last_error = f"Notification failed: {exc}"
         self.store.add(event, verdict.snapshot)
 
-    async def _notify_plain(self, item: Dict[str, Any]) -> None:
+    async def _notify_plain(self, item: Dict[str, Any], people: Optional[List[str]] = None) -> None:
         if not self.notifier.enabled:
             return
         camera = item.get("camera") or "Camera"
+        title = f"{camera}: {_and(people)}" if people else f"{camera}: Motion"
         try:
-            await self.notifier.send(f"{camera}: Motion", "New motion clip. Add a Claude API key in "
+            await self.notifier.send(title, "New motion clip. Add a Claude API key in "
                                      "FreeBlink Settings to get a description.", tags="movie_camera",
                                      clip=str(item["id"]))
         except Exception as exc:  # noqa: BLE001
@@ -302,7 +340,8 @@ class EventWatcher:
             found[label] = max(found.get(label, 0.0), conf)
         return found, sorted(parked - set(found))
 
-    async def _notify(self, camera: str, found: Dict[str, float], snapshot: Optional[bytes]) -> bool:
+    async def _notify(self, camera: str, found: Dict[str, float], snapshot: Optional[bytes],
+                      people: Optional[List[str]] = None) -> bool:
         now = time.time()
         fresh = {}
         for label, conf in found.items():
@@ -315,7 +354,7 @@ class EventWatcher:
             self._cooldown[f"{camera.lower()}|{label}"] = now
 
         labels = sorted(fresh, key=fresh.get, reverse=True)
-        title = f"{_human(labels)} at {camera}"
+        title = f"{_and(people) if people else _human(labels)} at {camera}"
         message = ", ".join(f"{l} {fresh[l]:.0%}" for l in labels)
         tags = ",".join(EMOJI.get(l, "") for l in labels if l in EMOJI)
         try:
@@ -340,3 +379,8 @@ def _human(labels: List[str]) -> str:
     if len(words) == 1:
         return words[0]
     return ", ".join(words[:-1]) + " and " + words[-1]
+
+
+def _and(names: List[str]) -> str:
+    """Names as written: "Mom", "Mom and Dad", "Mom, Dad and Sam"."""
+    return names[0] if len(names) == 1 else ", ".join(names[:-1]) + " and " + names[-1]

@@ -29,7 +29,11 @@ happens. Skip clothing unless it is the only way to tell people apart.
 caption unless nothing else happens.
 - If nothing moves except light, shadows, weather or plants, say so plainly, for example \
 "No one is visible; only leaves move in the wind."
-- No speculation about identity or intent."""
+- No speculation about identity or intent. Never guess who someone is from how they look.
+- Sometimes the input includes a note from FreeBlink's face matcher, which runs separately and names \
+household members the homeowner enrolled. When it does, refer to the person it most plausibly means \
+by that name (e.g. "Anna arrives home"). If several people are visible and you can't tell which one \
+was matched, say "Anna and someone else" or similar; never attach a name to a person by guessing."""
 
 OUTPUT_SCHEMA = {
     "type": "object",
@@ -76,7 +80,8 @@ class ClaudeAnalyzer:
         self.client = anthropic.AsyncAnthropic(max_retries=3, timeout=60.0, **kwargs)
         self.api_key = api_key
 
-    async def analyze_clip(self, video: bytes, camera: str, frames: int = 0, width: int = 0) -> ClaudeVerdict:
+    async def analyze_clip(self, video: bytes, camera: str, frames: int = 0, width: int = 0,
+                           people: Optional[List[str]] = None) -> ClaudeVerdict:
         # Full-size frames for the notification snapshot; smaller copies for Claude keep token use low.
         snapshots = await extract_frames(video, frames or config.CLAUDE_FRAMES)
         verdict = ClaudeVerdict(frames_analyzed=len(snapshots))
@@ -86,6 +91,9 @@ class ClaudeAnalyzer:
             return verdict
 
         content: List[Dict[str, Any]] = [{"type": "text", "text": f"Camera: {camera}"}]
+        if people:
+            content.append({"type": "text", "text": "Face matcher note: recognized in this clip: "
+                            + ", ".join(people) + "."})
         for jpeg in snapshots:
             small = await downscale(jpeg, width or config.CLAUDE_FRAME_WIDTH)
             content.append({

@@ -24,6 +24,7 @@
 
 - 🎥 **Live view**: Watch any camera in the browser (HLS). On a Mini with the Pan-Tilt mount, steer it with a D-pad or the arrow keys.
 - ✨ **AI clip descriptions**: Claude watches every new motion clip and writes a one-line headline and a short description, like *"A courier leaves a package at the front door."*
+- 🙂 **Familiar faces** (optional, off by default): Add the people you know, and descriptions say *"Anna arrives home"* instead of *"A person arrives"*. Recognition runs on your server; Claude only gets the name.
 - 📱 **Phone notifications**: Each description is pushed to your phone with the best frame attached, through the free [ntfy](https://ntfy.sh) app.
 - 🗂️ **Clips**: Cloud clips and Sync Module USB clips in one timeline, playable in the browser.
 - 🛡️ **Control**: Arm and disarm systems, turn motion detection on and off per camera, take a new photo. Battery, temperature and Wi-Fi at a glance.
@@ -63,6 +64,7 @@ flowchart LR
 - **Your password goes to Blink once and is never stored.** Blink's sign-in token and your Claude key are stored encrypted (Fernet).
 - Every Blink account gets its own isolated space: cameras, clips, descriptions, notification topic and key. One account can never see another's cameras.
 - Browsers hold a random session cookie; the server keeps only its hash. Cross-site requests are rejected, sign-in attempts are rate-limited per IP, and live views are capped per account and per server.
+- **Familiar faces** are opt-in per account, behind a consent checkbox. Only the people you add are stored, as encrypted face templates (`faces.enc`); faces of anyone else are compared and dropped. Face templates are biometric data under laws such as the GDPR and Illinois' BIPA, so only add people who agreed, and check the rules where you run a public server.
 - **Sign out on this device** ends the browser session; alerts keep coming. **Delete my FreeBlink data** (Settings) stops watching and erases everything for that account.
 
 ## Deploy your own (free)
@@ -131,6 +133,9 @@ Or with Docker: `docker compose up --build` builds the image locally.
 | `MAX_LIVE_PER_USER`, `MAX_LIVE_TOTAL` | `2`, `8` | Concurrent live views |
 | `INACTIVE_DAYS` | `60` | Pause accounts nobody has opened for this long |
 | `DETECT_ENGINE` | `claude` | `yolo` labels objects locally instead (`pip install ultralytics`); no descriptions |
+| `FACES_ENABLED` | `false` | Lets accounts turn on familiar faces in Settings. On first use it downloads InsightFace's `buffalo_s` models (non-commercial licence) into `data/models` |
+| `FACES_ACCOUNTS` | empty | Only these Blink emails (comma-separated) may use familiar faces; empty = every account |
+| `FACES_THRESHOLD` | `0.45` | Similarity needed to name someone; raise it if you see wrong names |
 
 The full list, with comments, is in [`.env.example`](.env.example).
 </details>
@@ -143,6 +148,7 @@ The full list, with comments, is in [`.env.example`](.env.example).
 | `app/tenants.py` | Accounts: per-Blink-account isolation, sessions, 2FA, rate limits, deletion |
 | `app/blink_service.py` | One Blink session: sign-in, encrypted token, polling, arm, photos, clips |
 | `app/events.py`, `app/claude_vision.py` | Clip watcher and Claude descriptions |
+| `app/faces.py` | Familiar faces: local face detection and matching, encrypted per-account templates |
 | `app/live.py`, `app/pantilt.py` | Live view (Blink → ffmpeg → HLS) and the Pan-Tilt mount |
 | `static/` | The web app (plain HTML, CSS and JavaScript) |
 | `Dockerfile`, `docker-compose.yml`, `deploy/` | Container, Cloudflare Tunnel / Caddy, setup and auto-update scripts |

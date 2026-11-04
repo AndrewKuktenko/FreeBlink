@@ -150,6 +150,7 @@ async function openLinkedClip() {
 
 function route(state) {
   if (state === "ready") {
+    loadFaces();
     if (linkedClip && location.search) openLinkedClip();
     else openPage(currentView);
     clearInterval(pollTimer);
@@ -388,6 +389,8 @@ function openSheet(title) {
   $("#player-title").textContent = title;
   $("#player-ai").hidden = true;
   $("#ptz").hidden = true;
+  $("#player-faces").hidden = true;
+  $("#player-picker").hidden = true;
   if (!$("#player").open) {
     $("#player").showModal();
     $("#player").focus();  // not the Done button: no focus ring when opened from a notification link
@@ -426,6 +429,11 @@ function openClip(clip) {
   if (clip.ai?.description) {
     $("#player-ai").replaceChildren(icon("sparkle"), el("span", {}, clip.ai.description));
     $("#player-ai").hidden = false;
+  }
+  if (faces.enabled) {
+    $("#player-faces").hidden = false;
+    $("#faces-find").hidden = false;
+    $("#faces-find").onclick = (e) => findFaces(e.currentTarget, clip.id);
   }
   playUrl(`/api/clips/${clip.id}/video`, false);
 }
@@ -577,7 +585,7 @@ function modelName(id) {
 
 async function loadSettings() {
   try {
-    const [s, ev] = await Promise.all([api("/api/settings"), api("/api/events?limit=1").catch(() => null)]);
+    const [s, ev] = await Promise.all([api("/api/settings"), api("/api/events?limit=1").catch(() => null), loadFaces()]);
     renderSettings(s, ev?.status);
   } catch (err) { toast(err.message, true); }
 }
@@ -614,5 +622,140 @@ $("#notify-test").addEventListener("click", (e) => busy(e.target, async () => {
   await api("/api/notifications/test", { method: "POST" });
   toast("Test sent. Check your phone.");
 }));
+
+// ---------- familiar faces ----------
+
+let faces = { available: false, enabled: false, people: [] };
+
+async function loadFaces() {
+  try { renderFaces(await api("/api/faces")); } catch { /* older server or signed out */ }
+}
+
+function renderFaces(state) {
+  faces = state;
+  $("#faces-section").hidden = !state.available;
+  if (!state.available) return;
+  const sw = $("#faces-switch");
+  sw.checked = state.enabled;
+  sw.disabled = !state.enabled && !$("#faces-consent").checked;
+  $("#faces-consent-row").hidden = state.enabled;
+  $("#faces-photo-btn").hidden = !state.enabled;
+  if (!state.enabled) $("#settings-picker").hidden = true;
+  const list = $("#faces-list");
+  list.querySelectorAll(".person-row").forEach((r) => r.remove());
+  for (const person of state.people) list.insertBefore(renderPerson(person), $("#faces-photo-btn"));
+}
+
+function renderPerson(person) {
+  const del = el("button", { class: "text-btn danger", "aria-label": `Delete ${person.name}` }, "Delete");
+  let timer = null;
+  del.addEventListener("click", () => {
+    if (!del.classList.contains("confirming")) {
+      del.classList.add("confirming");
+      del.textContent = "Tap to confirm";
+      timer = setTimeout(() => { del.classList.remove("confirming"); del.textContent = "Delete"; }, 4000);
+      return;
+    }
+    clearTimeout(timer);
+    busy(del, async () => {
+      renderFaces(await api(`/api/faces/people/${encodeURIComponent(person.id)}`, { method: "DELETE" }));
+      toast(`${person.name} deleted`);
+    });
+  });
+  const seen = person.last_seen ? `, last seen ${timeAgo(person.last_seen)}` : "";
+  return el("div", { class: "row person-row" },
+    person.image ? el("img", { class: "face-thumb", src: person.image, alt: "" }) : el("span", { class: "face-thumb" }),
+    el("div", { class: "person-text" },
+      el("span", { class: "row-label" }, person.name),
+      el("div", { class: "row-sub" }, `${person.samples} face sample${person.samples === 1 ? "" : "s"}${seen}`)),
+    del);
+}
+
+$("#faces-consent").addEventListener("change", () => { $("#faces-switch").disabled = !$("#faces-consent").checked; });
+$("#faces-switch").addEventListener("change", (e) => {
+  const sw = e.currentTarget;
+  const enabled = sw.checked;
+  busy(sw, async () => {
+    renderFaces(await api("/api/faces/settings", {
+      method: "POST", body: { enabled, consent: $("#faces-consent").checked },
+    }));
+    toast(enabled ? "Familiar faces on" : "Familiar faces off");
+  }).then(() => { sw.checked = faces.enabled; sw.disabled = !faces.enabled && !$("#faces-consent").checked; });
+});
+
+$("#faces-photo-btn").addEventListener("click", () => $("#faces-photo").click());
+$("#faces-photo").addEventListener("change", (e) => {
+  const file = e.target.files[0];
+  e.target.value = "";
+  if (!file) return;
+  const btn = $("#faces-photo-btn");
+  btn.textContent = "Looking for faces…";
+  busy(btn, async () => {
+    const res = await fetch("/api/faces/photo", { method: "POST", body: file, headers: { "Content-Type": "application/octet-stream" } });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(data.detail || `Request failed (${res.status})`);
+    showPicker($("#settings-picker"), data, "photo");
+  }).finally(() => { btn.textContent = "Add a person from a photo"; });
+});
+
+async function findFaces(button, clipId) {
+  const label = button.lastChild;
+  label.textContent = "Looking for faces…";
+  await busy(button, async () => {
+    const data = await api(`/api/clips/${encodeURIComponent(clipId)}/faces`);
+    button.hidden = true;
+    showPicker($("#player-picker"), data, "clip");
+  });
+  label.textContent = "Who's in this clip?";
+}
+
+function showPicker(root, { faces: found }, source) {
+  root.hidden = false;
+  if (!found.length) {
+    root.replaceChildren(el("p", { class: "footnote picker-empty" },
+      source === "clip"
+        ? "No clear face in this clip. Faces need to look roughly at the camera, be well lit and not too far away. Night (infrared) footage isn't used."
+        : "No clear face in this photo. Use one where the face is large, sharp and looking at the camera."));
+    return;
+  }
+  const names = el("datalist", { id: `names-${source}` }, faces.people.map((p) => el("option", { value: p.name })));
+  const form = el("form", { class: "picker-form", hidden: true });
+  const grid = el("div", { class: "picker-grid" });
+  let chosen = null;
+  for (const face of found) {
+    const tile = el("button", { type: "button", class: "picker-face", "aria-pressed": "false" },
+      el("img", { src: face.image, alt: "" }),
+      el("span", {}, face.match || "Not added"));
+    tile.addEventListener("click", () => {
+      grid.querySelectorAll(".picker-face").forEach((t) => t.setAttribute("aria-pressed", String(t === tile)));
+      chosen = { face, tile };
+      form.hidden = false;
+      form.name.value = face.match || "";
+      form.name.focus();
+    });
+    grid.append(tile);
+  }
+  form.append(
+    el("label", { class: "sr-only", for: `name-${source}` }, "Name"),
+    el("input", { id: `name-${source}`, name: "name", list: names.id, maxlength: "40", autocomplete: "off", placeholder: "Name, e.g. Anna", required: true }),
+    el("button", { type: "submit", class: "btn-tinted" }, "Save"));
+  form.addEventListener("submit", (e) => {
+    e.preventDefault();
+    if (!chosen) return;
+    const name = form.name.value.trim();
+    busy(form.querySelector("button"), async () => {
+      renderFaces(await api("/api/faces/people", { method: "POST", body: { token: chosen.face.token, name } }));
+      chosen.tile.disabled = true;
+      chosen.tile.setAttribute("aria-pressed", "false");
+      chosen.tile.lastChild.textContent = name;
+      chosen = null;
+      form.hidden = true;
+      toast(`Saved as ${name}`);
+    });
+  });
+  root.replaceChildren(
+    el("p", { class: "footnote picker-help" }, "Tap a face, then type who it is. Adding a few faces of the same person from different clips makes recognition more reliable."),
+    grid, form, names);
+}
 
 boot().catch((err) => toast(err.message, true));

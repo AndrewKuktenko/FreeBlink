@@ -6,6 +6,7 @@ The API key is encrypted at rest; nothing here is shared between Blink accounts.
 import json
 import os
 import secrets
+import time
 from pathlib import Path
 from typing import Any, Dict, Optional
 
@@ -65,6 +66,16 @@ class UserSettings:
         if data.get("site_url") != url:
             data["site_url"] = url
             self._save(data)
+
+    def faces_enabled(self) -> bool:
+        return bool(self._load().get("faces_enabled"))
+
+    def set_faces_enabled(self, enabled: bool) -> None:
+        data = self._load()
+        data["faces_enabled"] = enabled
+        if enabled:  # turning it on is where the owner confirms the people they add agreed
+            data["faces_consent_at"] = time.time()
+        self._save(data)
 
     def set_ntfy_topic(self, topic: str) -> None:
         data = self._load()

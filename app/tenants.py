@@ -18,6 +18,7 @@ from typing import Deque, Dict, Optional, Tuple
 from . import config, crypto
 from .blink_service import NEEDS_2FA, READY, BlinkError, BlinkService
 from .events import EventWatcher
+from .faces import FaceAccount
 from .live import LiveManager
 from .notifier import Notifier
 from .settings import UserSettings
@@ -43,6 +44,7 @@ class Tenant:
         self.folder = config.USERS_DIR / tid
         self.service = service or BlinkService(self.folder)
         self.settings = UserSettings(self.folder)
+        self.faces = FaceAccount(self.folder)
         self.live = LiveManager(self.folder)
         self.watcher: Optional[EventWatcher] = None
         self._meta_file = self.folder / "meta.json"
@@ -52,7 +54,7 @@ class Tenant:
         if self.service.session is None:
             await self.service.startup()
         notifier = Notifier(self.service.session, self.settings.ntfy_topic, self.settings.site_url)
-        self.watcher = EventWatcher(self.service, notifier, self.folder, self.settings)
+        self.watcher = EventWatcher(self.service, notifier, self.folder, self.settings, self.faces)
         self.watcher.start()
         self.touch(force=True)
 

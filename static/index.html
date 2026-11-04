@@ -40,6 +40,7 @@
     <symbol id="i-pin" viewBox="0 0 24 24"><path d="M12 21s-6.5-5.6-6.5-11a6.5 6.5 0 0 1 13 0C18.5 15.4 12 21 12 21z"/><circle cx="12" cy="10" r="2.3"/></symbol>
     <symbol id="i-check" viewBox="0 0 24 24"><path d="m5 12.5 4.5 4.5L19 7.5"/></symbol>
     <symbol id="i-alert" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9.5"/><path d="M12 7.5v5.5"/><path d="M12 16.5h.01"/></symbol>
+    <symbol id="i-face" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9.5"/><path d="M8.5 14.5a4.5 4.5 0 0 0 7 0"/><path d="M9 9.5h.01"/><path d="M15 9.5h.01"/></symbol>
     <symbol id="i-bell" viewBox="0 0 24 24"><path d="M6 8.5a6 6 0 0 1 12 0c0 6 2.5 8 2.5 8h-17S6 14.5 6 8.5z"/><path d="M10 20a2.2 2.2 0 0 0 4 0"/></symbol>
   </svg>
 
@@ -131,6 +132,24 @@
         </div>
         <p class="list-footer" id="ai-footer">Every new motion clip is described by Claude in a sentence or two and sent to your phone. Create a key at <a href="https://platform.claude.com/settings/keys" target="_blank" rel="noopener">platform.claude.com</a>; each clip uses a few thousand tokens, billed to your own Anthropic account. The key is checked with Anthropic, then stored encrypted.</p>
 
+        <div id="faces-section" hidden>
+          <h2 class="list-header">Familiar faces</h2>
+          <div class="list" id="faces-list">
+            <div class="row">
+              <label class="row-label" for="faces-switch">Recognize familiar faces</label>
+              <input type="checkbox" id="faces-switch" class="switch push-end" role="switch">
+            </div>
+            <label class="row consent-row" id="faces-consent-row">
+              <input type="checkbox" id="faces-consent">
+              <span>Everyone I add has agreed to be recognized</span>
+            </label>
+            <button type="button" id="faces-photo-btn" class="row row-button" hidden>Add a person from a photo</button>
+          </div>
+          <input type="file" id="faces-photo" accept="image/*" hidden>
+          <div id="settings-picker" class="face-picker" hidden></div>
+          <p class="list-footer">Clip descriptions use the names of people you add here, when their face is clearly visible in daylight. Recognition runs on this server; Claude only gets the name. To add someone, open a clip and tap <em>Who's in this clip?</em>, or use a photo. Each person is kept as an encrypted face template; delete them to erase it. Turning this off stops recognition and keeps the people you added.</p>
+        </div>
+
         <h2 class="list-header">Phone notifications</h2>
         <div class="list">
           <form id="topic-form" class="row row-form">
@@ -173,6 +192,10 @@
       <div id="video-wait" class="video-wait" hidden><span class="spinner large"></span><span id="video-wait-text">Waking up the camera…</span></div>
     </div>
     <p id="player-ai" class="player-ai" hidden></p>
+    <div id="player-faces" class="player-faces" hidden>
+      <button type="button" id="faces-find" class="btn-gray"><svg class="ic"><use href="#i-face"/></svg>Who's in this clip?</button>
+      <div id="player-picker" class="face-picker" hidden></div>
+    </div>
     <div id="ptz" class="ptz" hidden>
       <div class="dpad" role="group" aria-label="Pan and tilt">
         <button class="dir up" data-act="up" aria-label="Tilt up"><svg class="ic"><use href="#i-up"/></svg></button>

@@ -89,6 +89,19 @@ STATIONARY_CLASSES = [c.strip().lower() for c in os.environ.get(
     "STATIONARY_CLASSES", "car,truck,bus,motorcycle,bicycle").split(",") if c.strip()]
 STATIONARY_WINDOW_HOURS = float(os.environ.get("STATIONARY_WINDOW_HOURS", "24"))
 
+# ---------- familiar faces (local, InsightFace buffalo_s) ----------
+# Off unless the server operator turns it on; then each account still opts in from Settings.
+FACES_ENABLED = os.environ.get("FACES_ENABLED", "false").lower() in ("1", "true", "yes", "on")
+# Optional allow-list of Blink account emails (comma-separated); empty = every account may opt in.
+FACES_ACCOUNTS = [a.strip().lower() for a in os.environ.get("FACES_ACCOUNTS", "").split(",") if a.strip()]
+FACES_THRESHOLD = float(os.environ.get("FACES_THRESHOLD", "0.45"))  # cosine similarity to name someone
+FACES_MARGIN = float(os.environ.get("FACES_MARGIN", "0.05"))  # how far ahead of the next person
+FACES_MIN_SIZE = int(os.environ.get("FACES_MIN_SIZE", "40"))  # px; smaller faces aren't compared
+FACES_MIN_SCORE = float(os.environ.get("FACES_MIN_SCORE", "0.6"))  # face detector confidence
+FACES_FPS = float(os.environ.get("FACES_FPS", "2"))
+FACES_MAX_FRAMES = int(os.environ.get("FACES_MAX_FRAMES", "20"))
+FACES_THREADS = int(os.environ.get("FACES_THREADS", "1"))
+
 # ---------- notifications (ntfy) ----------
 NTFY_SERVER = os.environ.get("NTFY_SERVER", "https://ntfy.sh")
 NTFY_TOPIC = os.environ.get("NTFY_TOPIC", "")
