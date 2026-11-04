@@ -24,6 +24,7 @@
 
 - 🎥 **Live view**: Watch any camera in the browser (HLS). On a Mini with the Pan-Tilt mount, steer it with a D-pad or the arrow keys.
 - ✨ **AI clip descriptions**: Claude watches every new motion clip and writes a one-line headline and a short description, like *"A courier leaves a package at the front door."*
+- ⚠️ **Suspicious activity** (optional, off by default): Clips where someone does something from a short list (tries door or car handles, looks into windows, carries off a package, climbs a fence, tampers with a camera) get a *Suspicious* label, and only those come through as urgent notifications. It judges actions, never how people look. Tap *Not suspicious* to clear a wrong flag.
 - 🙂 **Familiar faces** (optional, off by default): Add the people you know, and descriptions say *"Anna arrives home"* instead of *"A person arrives"*. Recognition runs on your server; Claude only gets the name.
 - 📱 **Phone notifications**: Each description is pushed to your phone with the best frame attached, through the free [ntfy](https://ntfy.sh) app.
 - 🗂️ **Clips**: Cloud clips and Sync Module USB clips in one timeline, playable in the browser.
@@ -64,6 +65,7 @@ flowchart LR
 - **Your password goes to Blink once and is never stored.** Blink's sign-in token and your Claude key are stored encrypted (Fernet).
 - Every Blink account gets its own isolated space: cameras, clips, descriptions, notification topic and key. One account can never see another's cameras.
 - Browsers hold a random session cookie; the server keeps only its hash. Cross-site requests are rejected, sign-in attempts are rate-limited per IP, and live views are capped per account and per server.
+- **Suspicious activity** is opt-in per account. The label belongs to the clip, never to a person: Claude must name the visible action that earned it, and only captions of the same camera's recent clips go along as context, never images or faces. Nothing is armed, triggered or reported from the label.
 - **Familiar faces** are opt-in per account, behind a consent checkbox. Only the people you add are stored, as encrypted face templates (`faces.enc`); faces of anyone else are compared and dropped. Face templates are biometric data under laws such as the GDPR and Illinois' BIPA, so only add people who agreed, and check the rules where you run a public server.
 - **Sign out on this device** ends the browser session; alerts keep coming. **Delete my FreeBlink data** (Settings) stops watching and erases everything for that account.
 
@@ -147,7 +149,7 @@ The full list, with comments, is in [`.env.example`](.env.example).
 | `app/main.py` | FastAPI routes, session cookies, cross-site request protection |
 | `app/tenants.py` | Accounts: per-Blink-account isolation, sessions, 2FA, rate limits, deletion |
 | `app/blink_service.py` | One Blink session: sign-in, encrypted token, polling, arm, photos, clips |
-| `app/events.py`, `app/claude_vision.py` | Clip watcher and Claude descriptions |
+| `app/events.py`, `app/claude_vision.py` | Clip watcher, Claude descriptions and suspicious-activity labels ([research](docs/research/suspicious-activity.md)) |
 | `app/faces.py` | Familiar faces: local face detection and matching, encrypted per-account templates |
 | `app/live.py`, `app/pantilt.py` | Live view (Blink → ffmpeg → HLS) and the Pan-Tilt mount |
 | `static/` | The web app (plain HTML, CSS and JavaScript) |

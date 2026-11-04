@@ -12,6 +12,8 @@ from typing import Any, Dict, Optional
 
 from . import crypto
 
+NORMAL_NOTE_MAX = 300  # longer, very specific context sways the model more than it helps
+
 
 class UserSettings:
     def __init__(self, folder: Path) -> None:
@@ -76,6 +78,33 @@ class UserSettings:
         if enabled:  # turning it on is where the owner confirms the people they add agreed
             data["faces_consent_at"] = time.time()
         self._save(data)
+
+    def suspicious_enabled(self) -> bool:
+        return bool(self._load().get("suspicious_enabled"))
+
+    def set_suspicious_enabled(self, enabled: bool) -> None:
+        data = self._load()
+        data["suspicious_enabled"] = enabled
+        self._save(data)
+
+    def normal_activity(self) -> str:
+        """The owner's short note on what's normal at their home (helps the suspicious-activity check)."""
+        return self._load().get("normal_activity", "")
+
+    def set_normal_activity(self, note: str) -> None:
+        data = self._load()
+        data["normal_activity"] = " ".join(note.split())[:NORMAL_NOTE_MAX]
+        self._save(data)
+
+    def time_zone(self) -> str:
+        """IANA zone reported by the owner's browser, e.g. "America/New_York"; "" until first seen."""
+        return self._load().get("time_zone", "")
+
+    def remember_time_zone(self, zone: str) -> None:
+        data = self._load()
+        if data.get("time_zone") != zone:
+            data["time_zone"] = zone
+            self._save(data)
 
     def set_ntfy_topic(self, topic: str) -> None:
         data = self._load()

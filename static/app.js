@@ -11,9 +11,12 @@ let clipHours = 24;
 
 // ---------- helpers ----------
 
+// The owner's time zone, so suspicious-activity checks know the local time of each clip.
+const TIME_ZONE = (() => { try { return Intl.DateTimeFormat().resolvedOptions().timeZone || ""; } catch { return ""; } })();
+
 async function api(path, options = {}) {
   const res = await fetch(path, {
-    headers: { "Content-Type": "application/json" },
+    headers: { "Content-Type": "application/json", ...(TIME_ZONE ? { "X-Time-Zone": TIME_ZONE } : {}) },
     ...options,
     body: options.body ? JSON.stringify(options.body) : undefined,
   });
@@ -388,6 +391,7 @@ function waiting(text, failed = false) {
 function openSheet(title) {
   $("#player-title").textContent = title;
   $("#player-ai").hidden = true;
+  $("#player-concern").hidden = true;
   $("#ptz").hidden = true;
   $("#player-faces").hidden = true;
   $("#player-picker").hidden = true;
@@ -430,12 +434,35 @@ function openClip(clip) {
     $("#player-ai").replaceChildren(icon("sparkle"), el("span", {}, clip.ai.description));
     $("#player-ai").hidden = false;
   }
+  if (clip.concern) showConcern(clip);
   if (faces.enabled) {
     $("#player-faces").hidden = false;
     $("#faces-find").hidden = false;
     $("#faces-find").onclick = (e) => findFaces(e.currentTarget, clip.id);
   }
   playUrl(`/api/clips/${clip.id}/video`, false);
+}
+
+const CONCERN_LABEL = { suspicious: "Suspicious", threat: "Alert" };
+
+function showConcern(clip) {
+  const { level, evidence, cleared } = clip.concern;
+  const box = $("#player-concern");
+  box.className = `player-concern ${level}${cleared ? " cleared" : ""}`;
+  $("#player-concern-text").textContent = cleared
+    ? "You marked this clip as not suspicious."
+    : `${CONCERN_LABEL[level] || "Flagged"}: ${evidence}.`;
+  const btn = $("#player-concern-btn");
+  btn.textContent = cleared ? "Undo" : "Not suspicious";
+  btn.onclick = () => busy(btn, async () => {
+    clip.concern = await api(`/api/clips/${encodeURIComponent(clip.id)}/concern`, {
+      method: "POST", body: { cleared: !cleared },
+    });
+    showConcern(clip);
+    const row = document.querySelector(`.clip-row[data-clip="${CSS.escape(clip.id)}"]`);
+    if (row) row.replaceWith(renderClip(clip));
+  });
+  box.hidden = false;
 }
 
 $("#player-close").addEventListener("click", () => $("#player").close());
@@ -541,10 +568,13 @@ function renderClip(clip) {
   img.addEventListener("error", () => { img.remove(); thumb.firstChild.textContent = "No preview"; });
   thumb.prepend(img);
   thumb.append(el("span", { class: "play-mini" }, icon("play")));
+  const flag = clip.concern && !clip.concern.cleared ? clip.concern.level : null;
+  if (flag) thumb.append(el("span", { class: `concern-chip ${flag}` }, icon("warning"), CONCERN_LABEL[flag]));
 
   const t = toMs(clip.created_at);
   const ai = clip.ai;
-  return el("button", { class: "clip-row", onclick: () => openClip(clip), "aria-label": `${ai?.title || "Motion"}, ${clip.camera}, ${timeFmt.format(t)}` },
+  const label = `${flag ? `${CONCERN_LABEL[flag]}: ` : ""}${ai?.title || "Motion"}, ${clip.camera}, ${timeFmt.format(t)}`;
+  return el("button", { class: "clip-row", "data-clip": clip.id, onclick: () => openClip(clip), "aria-label": label },
     thumb,
     el("div", { class: "clip-text" },
       el("span", { class: "clip-title" }, ai?.title || "Motion"),
@@ -568,6 +598,11 @@ function renderSettings(s, status) {
   $("#ai-footer").firstChild.textContent =
     `Every new motion clip is described by ${modelName(s.model)} in a sentence or two and sent to your phone. Create a key at `;
   $("#topic-form").topic.value = s.ntfy_topic || "";
+  $("#concern-section").hidden = s.engine !== "claude";
+  $("#concern-switch").checked = !!s.suspicious_enabled;
+  $("#normal-form").hidden = !s.suspicious_enabled;
+  if (document.activeElement !== $("#normal-input")) $("#normal-input").value = s.normal_activity || "";
+  $("#normal-input").maxLength = s.normal_activity_max || 300;
   $("#ntfy-server").textContent = (s.ntfy_server || "").replace(/^https?:\/\//, "");
 
   if (status) {
@@ -612,6 +647,17 @@ $("#key-remove").addEventListener("click", (e) => saveSettings(e.target, { anthr
 $("#topic-form").addEventListener("submit", (e) => {
   e.preventDefault();
   saveSettings(e.target.querySelector("button[type=submit]"), { ntfy_topic: e.target.topic.value }, "Topic saved");
+});
+$("#concern-switch").addEventListener("change", (e) => {
+  const sw = e.currentTarget;
+  const enabled = sw.checked;
+  saveSettings(sw, { suspicious_enabled: enabled },
+    enabled ? "Suspicious activity will be flagged" : "Suspicious activity flags off")
+    .then((ok) => { if (!ok) sw.checked = !enabled; });
+});
+$("#normal-form").addEventListener("submit", (e) => {
+  e.preventDefault();
+  saveSettings(e.target.querySelector("button[type=submit]"), { normal_activity: e.target.note.value }, "Saved");
 });
 $("#topic-copy").addEventListener("click", async () => {
   const topic = $("#topic-input").value;

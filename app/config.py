@@ -89,6 +89,12 @@ STATIONARY_CLASSES = [c.strip().lower() for c in os.environ.get(
     "STATIONARY_CLASSES", "car,truck,bus,motorcycle,bicycle").split(",") if c.strip()]
 STATIONARY_WINDOW_HOURS = float(os.environ.get("STATIONARY_WINDOW_HOURS", "24"))
 
+# ---------- suspicious activity (each account opts in from Settings) ----------
+# Captions of this camera's clips from the last N minutes go along as context (repeat visits).
+CONCERN_HISTORY_MINUTES = int(os.environ.get("CONCERN_HISTORY_MINUTES", "30"))
+# At most one urgent (priority 5) "suspicious" push per camera in this many seconds; threats always.
+CONCERN_ALERT_COOLDOWN = int(os.environ.get("CONCERN_ALERT_COOLDOWN", "600"))
+
 # ---------- familiar faces (local, InsightFace buffalo_s) ----------
 # Off unless the server operator turns it on; then each account still opts in from Settings.
 FACES_ENABLED = os.environ.get("FACES_ENABLED", "false").lower() in ("1", "true", "yes", "on")

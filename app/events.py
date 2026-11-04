@@ -4,9 +4,10 @@ import asyncio
 import json
 import logging
 import time
-from typing import Any, Dict, List, Optional
-
+from datetime import datetime
 from pathlib import Path
+from typing import TYPE_CHECKING, Any, Dict, List, Optional
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from . import config
 from .blink_service import READY, BlinkService, _ts
@@ -14,6 +15,9 @@ from .detector import ClipAnalysis, Detector, iou
 from .faces import FaceAccount, available_for, match_clip, shared_face_engine
 from .notifier import Notifier
 from .settings import UserSettings
+
+if TYPE_CHECKING:
+    from .claude_vision import ConcernContext
 
 log = logging.getLogger(__name__)
 
@@ -63,6 +67,15 @@ class EventStore:
         self.events = self.events[:config.EVENTS_KEEP]
         self._write(self.index_file, self.events)
 
+    def update_clip(self, clip_id: str, **fields: Any) -> Optional[Dict[str, Any]]:
+        """Change fields on the newest event for `clip_id`. Returns it, or None if there's none."""
+        for event in self.events:
+            if event["clip_id"] == clip_id:
+                event.update(fields)
+                self._write(self.index_file, self.events)
+                return event
+        return None
+
     def snapshot(self, event_id: str) -> Optional[bytes]:
         if not event_id.replace("-", "").isalnum():
             return None
@@ -93,6 +106,7 @@ class EventWatcher:
         self.store = EventStore(folder / "events")
         self._task: Optional[asyncio.Task] = None
         self._cooldown: Dict[str, float] = {}
+        self._alerted: Dict[str, float] = {}  # camera -> last urgent suspicious-activity push
         self.last_check: Optional[float] = None
         self.last_error: Optional[str] = None
         # Never alert on clips recorded before the app started watching (with a little slack
@@ -259,19 +273,21 @@ class EventWatcher:
         if analyzer is None:  # key removed while the clip downloaded
             await self._notify_plain(item)
             return
+        concern = self._concern_context(item) if self.settings.suspicious_enabled() else None
         started = time.monotonic()
         try:
-            verdict = await analyzer.analyze_clip(video, camera, people=people or [])
+            verdict = await analyzer.analyze_clip(video, camera, people=people or [], concern=concern)
         except anthropic.BadRequestError as exc:
             # Something about this clip the API won't take; record it and move on.
             log.warning("Claude rejected clip %s: %s", clip_id, exc.message)
             self.last_error = f"Claude rejected clip {clip_id}: {exc.message}"
             return
         # Rate limits, outages and auth errors propagate: the clip stays unseen and is retried.
-        log.info("Clip %s (%s): %d frames, %.1fs, %d in / %d out tokens [%s] -> %s: %s",
+        log.info("Clip %s (%s): %d frames, %.1fs, %d in / %d out tokens [%s] -> %s: %s%s",
                  clip_id, camera, verdict.frames_analyzed, time.monotonic() - started,
                  verdict.input_tokens, verdict.output_tokens, verdict.model,
-                 verdict.title, verdict.description)
+                 verdict.title, verdict.description,
+                 f" [{verdict.concern}: {verdict.concern_evidence}]" if verdict.concern != "none" else "")
 
         event = {
             "id": f"{clip_id}-{int(time.time())}",
@@ -290,18 +306,73 @@ class EventWatcher:
             "analyzed_at": time.time(),
             "notified": False,
         }
+        if verdict.concern_checked:
+            event["concern"] = verdict.concern
+            event["concern_evidence"] = verdict.concern_evidence
         if self.notifier.enabled:
-            title = verdict.title or "Motion"
+            title = f"{camera}: {verdict.title or 'Motion'}"
+            message = verdict.description
+            tags = [EMOJI[s] for s in verdict.subjects if s in EMOJI]
+            if concern is None:  # feature off: notifications exactly as before
+                priority = 5 if "person" in verdict.subjects else 4
+            else:
+                # Only flagged clips get the most urgent priority, so the owner can let just those
+                # through Do Not Disturb. One urgent push per camera per cooldown; threats always.
+                priority = 4
+                if verdict.concern != "none":
+                    label = "Alert" if verdict.concern == "threat" else "Suspicious"
+                    title = f"{label} at {camera}: {verdict.title or 'Motion'}"
+                    message = f"{verdict.description}\nFlagged: {verdict.concern_evidence}."
+                    tags.insert(0, "rotating_light" if verdict.concern == "threat" else "warning")
+                    now = time.time()
+                    if (verdict.concern == "threat"
+                            or now - self._alerted.get(camera.lower(), 0) >= config.CONCERN_ALERT_COOLDOWN):
+                        self._alerted[camera.lower()] = now
+                        priority = 5
             try:
-                await self.notifier.send(
-                    f"{camera}: {title}", verdict.description, image=verdict.snapshot,
-                    tags=",".join(EMOJI[s] for s in verdict.subjects if s in EMOJI),
-                    priority=5 if "person" in verdict.subjects else 4, clip=clip_id)
+                await self.notifier.send(title, message, image=verdict.snapshot, tags=",".join(tags),
+                                         priority=priority, clip=clip_id)
                 event["notified"] = True
             except Exception as exc:  # noqa: BLE001
                 log.warning("Notification failed: %s", exc)
                 self.last_error = f"Notification failed: {exc}"
         self.store.add(event, verdict.snapshot)
+
+    def _concern_context(self, item: Dict[str, Any]) -> "ConcernContext":
+        """Local time, the owner's note, and captions of recent clips on the same camera.
+
+        History stays at the level of clips: captions only, never images or faces, and nothing
+        that links people across clips by how they look."""
+        from .claude_vision import ConcernContext
+
+        camera = item.get("camera") or "Camera"
+        created = _ts(item.get("created_at")) or time.time()
+        context = ConcernContext(normal=self.settings.normal_activity())
+        zone = self.settings.time_zone()
+        if zone:
+            try:
+                context.local_time = datetime.fromtimestamp(created, ZoneInfo(zone)).strftime("%a %H:%M")
+            except (ZoneInfoNotFoundError, ValueError):
+                pass  # unknown zone: better no time than a wrong one
+        window = config.CONCERN_HISTORY_MINUTES * 60
+        earlier = []
+        for event in self.store.events[:200]:  # newest first
+            if event.get("camera") != camera or not event.get("title"):
+                continue
+            ago = created - _ts(event.get("created_at"))
+            if not 0 < ago <= window:
+                continue
+            if event.get("concern_cleared"):
+                level = " (owner marked it not suspicious)"
+            elif event.get("concern") in ("suspicious", "threat"):
+                level = f" ({event['concern']}: {event.get('concern_evidence', '')})"
+            else:
+                level = ""
+            earlier.append(f'{max(1, round(ago / 60))} min earlier "{event["title"]}"{level}')
+            if len(earlier) == 5:
+                break
+        context.earlier = earlier[::-1]  # oldest first, like the frames
+        return context
 
     async def _notify_plain(self, item: Dict[str, Any], people: Optional[List[str]] = None) -> None:
         if not self.notifier.enabled:

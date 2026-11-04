@@ -6,8 +6,10 @@ import logging
 import re
 import secrets
 from contextlib import asynccontextmanager
+from functools import lru_cache
 from typing import Optional
 from urllib.parse import urlparse
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from fastapi import Depends, FastAPI, HTTPException, Request
 from fastapi.responses import HTMLResponse, FileResponse, JSONResponse, Response
@@ -18,7 +20,7 @@ from . import config, pantilt
 from .blink_service import NEEDS_2FA, READY, BlinkError
 from .faces import available_for, group_faces, person_view, shared_face_engine
 from .live import LiveLimitError
-from .settings import key_hint
+from .settings import NORMAL_NOTE_MAX, key_hint
 from .tenants import Tenant, TenantManager
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
@@ -91,7 +93,21 @@ async def current(request: Request) -> Tenant:
     if tenant is None:
         raise HTTPException(401, "Not signed in.")
     tenant.settings.remember_site_url(str(request.base_url))
+    zone = request.headers.get("x-time-zone", "")
+    if zone and _valid_zone(zone):  # the owner's clock, for "local time" in suspicious-activity checks
+        tenant.settings.remember_time_zone(zone)
     return tenant
+
+
+@lru_cache(maxsize=64)
+def _valid_zone(zone: str) -> bool:
+    if not re.fullmatch(r"[A-Za-z0-9_+\-]+(/[A-Za-z0-9_+\-]+){0,2}", zone):
+        return False
+    try:
+        ZoneInfo(zone)
+        return True
+    except (ZoneInfoNotFoundError, ValueError):
+        return False
 
 
 # ---------- auth ----------
@@ -215,7 +231,27 @@ async def clips(hours: int = 24, tenant: Tenant = Depends(current)):
                           "subjects": event.get("subjects") or sorted(event.get("detected") or {})}
         if event and event.get("people"):
             clip["people"] = event["people"]
+        if event and event.get("concern") in ("suspicious", "threat"):
+            clip["concern"] = {"level": event["concern"], "evidence": event.get("concern_evidence", ""),
+                               "cleared": bool(event.get("concern_cleared"))}
     return {"clips": items, "ai_enabled": bool(tenant.settings.anthropic_api_key())}
+
+
+class ConcernBody(BaseModel):
+    cleared: bool  # True: the owner says the flagged clip isn't suspicious
+
+
+@app.post("/api/clips/{clip_id}/concern")
+async def clip_concern(clip_id: str, body: ConcernBody, tenant: Tenant = Depends(current)):
+    store = tenant.watcher.store
+    event = next((e for e in store.events if e["clip_id"] == clip_id), None)
+    if event is None or event.get("concern") not in ("suspicious", "threat"):
+        raise HTTPException(404, "This clip isn't flagged.")
+    store.update_clip(clip_id, concern_cleared=body.cleared)
+    # Owner feedback: the signal for tightening the checklist if flags turn out wrong too often.
+    log.info("Owner %s the %s flag on clip %s (%s)", "cleared" if body.cleared else "restored",
+             event["concern"], clip_id, event.get("concern_evidence", ""))
+    return {"level": event["concern"], "evidence": event.get("concern_evidence", ""), "cleared": body.cleared}
 
 
 @app.get("/api/clips/{clip_id}/video")
@@ -266,6 +302,8 @@ async def notifications_test(tenant: Tenant = Depends(current)):
 class SettingsBody(BaseModel):
     anthropic_api_key: Optional[str] = None  # "" removes the key
     ntfy_topic: Optional[str] = None
+    suspicious_enabled: Optional[bool] = None
+    normal_activity: Optional[str] = None
 
 
 def _settings_view(tenant: Tenant):
@@ -279,6 +317,9 @@ def _settings_view(tenant: Tenant):
         "effort": config.CLAUDE_EFFORT,
         "engine": config.DETECT_ENGINE,
         "account": _mask(tenant.service.username),
+        "suspicious_enabled": tenant.settings.suspicious_enabled(),
+        "normal_activity": tenant.settings.normal_activity(),
+        "normal_activity_max": NORMAL_NOTE_MAX,
     }
 
 
@@ -312,6 +353,12 @@ async def save_settings(body: SettingsBody, tenant: Tenant = Depends(current)):
         if not re.fullmatch(r"[A-Za-z0-9_-]{8,64}", topic):
             raise BlinkError("Topic must be 8-64 letters, digits, '-' or '_' (use something hard to guess).")
         tenant.settings.set_ntfy_topic(topic)
+    if body.suspicious_enabled is not None:
+        tenant.settings.set_suspicious_enabled(body.suspicious_enabled)
+    if body.normal_activity is not None:
+        if len(body.normal_activity.strip()) > NORMAL_NOTE_MAX:
+            raise BlinkError(f"Keep the note under {NORMAL_NOTE_MAX} characters.")
+        tenant.settings.set_normal_activity(body.normal_activity)
     return _settings_view(tenant)
 
 

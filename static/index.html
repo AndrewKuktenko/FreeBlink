@@ -41,6 +41,7 @@
     <symbol id="i-check" viewBox="0 0 24 24"><path d="m5 12.5 4.5 4.5L19 7.5"/></symbol>
     <symbol id="i-alert" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9.5"/><path d="M12 7.5v5.5"/><path d="M12 16.5h.01"/></symbol>
     <symbol id="i-face" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9.5"/><path d="M8.5 14.5a4.5 4.5 0 0 0 7 0"/><path d="M9 9.5h.01"/><path d="M15 9.5h.01"/></symbol>
+    <symbol id="i-warning" viewBox="0 0 24 24"><path d="M10.3 4.2 2.6 17.6a2 2 0 0 0 1.7 2.9h15.4a2 2 0 0 0 1.7-2.9L13.7 4.2a2 2 0 0 0-3.4 0z"/><path d="M12 9.5v4"/><path d="M12 17h.01"/></symbol>
     <symbol id="i-bell" viewBox="0 0 24 24"><path d="M6 8.5a6 6 0 0 1 12 0c0 6 2.5 8 2.5 8h-17S6 14.5 6 8.5z"/><path d="M10 20a2.2 2.2 0 0 0 4 0"/></symbol>
   </svg>
 
@@ -132,6 +133,24 @@
         </div>
         <p class="list-footer" id="ai-footer">Every new motion clip is described by Claude in a sentence or two and sent to your phone. Create a key at <a href="https://platform.claude.com/settings/keys" target="_blank" rel="noopener">platform.claude.com</a>; each clip uses a few thousand tokens, billed to your own Anthropic account. The key is checked with Anthropic, then stored encrypted.</p>
 
+        <div id="concern-section" hidden>
+          <h2 class="list-header">Suspicious activity</h2>
+          <div class="list">
+            <div class="row">
+              <label class="row-label" for="concern-switch">Flag suspicious activity</label>
+              <input type="checkbox" id="concern-switch" class="switch push-end" role="switch">
+            </div>
+            <form id="normal-form" class="row row-form normal-form" hidden>
+              <div class="normal-field">
+                <label class="normal-label" for="normal-input">What's normal here (optional)</label>
+                <textarea id="normal-input" name="note" rows="2" maxlength="300" placeholder="e.g. Gardener on Tuesday mornings. Neighbour's kids cut across the lawn."></textarea>
+              </div>
+              <button type="submit" class="btn-tinted">Save</button>
+            </form>
+          </div>
+          <p class="list-footer">Claude adds a <em>Suspicious</em> label when someone does something from a short list: tries door or car handles, looks into windows or cars up close, carries off a package, climbs a fence, or tampers with a camera. It never flags people for how they look, what they wear, or because it doesn't know them. Only flagged clips are sent as urgent notifications, so you can let just those through Do Not Disturb. It can be wrong, so check the clip.</p>
+        </div>
+
         <div id="faces-section" hidden>
           <h2 class="list-header">Familiar faces</h2>
           <div class="list" id="faces-list">
@@ -192,6 +211,11 @@
       <div id="video-wait" class="video-wait" hidden><span class="spinner large"></span><span id="video-wait-text">Waking up the camera…</span></div>
     </div>
     <p id="player-ai" class="player-ai" hidden></p>
+    <div id="player-concern" class="player-concern" hidden>
+      <svg class="ic"><use href="#i-warning"/></svg>
+      <span id="player-concern-text"></span>
+      <button type="button" id="player-concern-btn" class="text-btn"></button>
+    </div>
     <div id="player-faces" class="player-faces" hidden>
       <button type="button" id="faces-find" class="btn-gray"><svg class="ic"><use href="#i-face"/></svg>Who's in this clip?</button>
       <div id="player-picker" class="face-picker" hidden></div>
